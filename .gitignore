@@ -1,0 +1,20 @@
+# dependencies & build
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# secrets
+.env
+.env.*
+!.env.example
+
+# runtime data (created by the agent – never commit)
+data/*
+!data/leads.example.json
+
+# misc
+.DS_Store
+*.log
+.vercel
