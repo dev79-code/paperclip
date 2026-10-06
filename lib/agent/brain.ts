@@ -194,5 +194,6 @@ Rules: barter only; aim for >=1.5x; reject if risk is high; ask for timestamped 
     ...r,
     score: scoreOf(base, item),
     policyFlags: [...flags, ...(r.extraFlags || [])],
+    marketNotes: market.slice(0, 700),
   };
 }

@@ -12,6 +12,8 @@ export interface Item {
   valueHigh: number;
   valuationNotes: string;
   imageUrl?: string;
+  /** what price research found when this item was valued (sold listings / web search) */
+  marketNotes?: string;
   acquiredAt: string;
   acquiredFrom?: string; // handle of counterparty
 }
@@ -87,6 +89,7 @@ export interface Evaluation {
   reasoning: string;
   replyText: string;
   policyFlags: string[];
+  marketNotes?: string;
 }
 
 export interface Trade {

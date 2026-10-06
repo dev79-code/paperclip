@@ -50,5 +50,6 @@ export async function GET() {
     history: db.history.slice(-400),
     postsCount: db.posts.length,
     xHandle: config.xHandle,
+    roundIntervalSec: config.mode === "demo" && process.env.DEMO_AUTOPLAY !== "0" ? TICK_S : config.tickMinutes * 60,
   });
 }

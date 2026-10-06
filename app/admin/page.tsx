@@ -73,6 +73,12 @@ export default function Admin() {
         <p className="small muted">{(db as any).roundRunning ? "An agent round is running. " : ""}{(db as any).pendingActions > 0 ? `${(db as any).pendingActions} change(s) queued.` : ""}</p>
       )}
       <p className="muted">Holding <b>{cur.name}</b> (~{fmt(cur.estValueUsd)}) · round {db.tickCount} · {db.trades.length} trades</p>
+      <form className="card" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", margin: "12px 0 0" }}
+        onSubmit={(e) => { e.preventDefault(); const url = (new FormData(e.currentTarget).get("url") as string) || ""; act({ action: "item_image", url }); }}>
+        <span className="small muted" style={{ flex: "0 0 auto" }}>Photo of <b>{cur.name}</b> (shown on the site):</span>
+        <input name="url" type="url" placeholder="https://… link to a photo" defaultValue={cur.imageUrl || ""} key={cur.id} style={{ flex: "1 1 260px", margin: 0 }} />
+        <button disabled={busy}>Save photo</button>
+      </form>
 
       <Section title="Needs your approval" empty="Nothing waiting.">
         {by(["awaiting_approval"]).map((o) => (

@@ -8,6 +8,7 @@ import { acceptOffer, completeTrade } from "./agent/loop";
 export type Action =
   | { type: "admin"; action: "approve" | "reject" | "received"; offerId: string }
   | { type: "admin"; action: "permission"; venueId: string; permission: "granted" | "pending" | "not_required" | "denied" }
+  | { type: "admin"; action: "item_image"; url: string }
   | { type: "web_offer"; itemName: string; itemDescription: string; photoUrl?: string; contact: string }
   | { type: "email"; from: string; subject?: string; text: string; messageId?: string }
   | { type: "reset" };
@@ -62,6 +63,14 @@ export async function applyAction(db: DB, a: Action): Promise<string> {
         if (!PERMS.includes(a.permission)) return "bad permission value";
         v.permission = a.permission;
         log(db, "system", `Venue ${v.name} permission → ${a.permission}.`);
+        return "ok";
+      }
+      if (a.action === "item_image") {
+        const it = db.items.find((i) => i.id === db.currentItemId);
+        if (!it) return "no current item";
+        if (a.url && !/^https:\/\/\S+$/i.test(a.url)) return "photo link must start with https://";
+        it.imageUrl = a.url || undefined;
+        log(db, "system", a.url ? `New photo added for ${it.name}.` : `Photo removed for ${it.name}.`);
         return "ok";
       }
       const o = db.offers.find((x) => x.id === a.offerId);

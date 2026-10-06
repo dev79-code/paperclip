@@ -202,6 +202,7 @@ export function completeTrade(db: DB, o: Offer) {
     valueLow: ev.valueLow,
     valueHigh: ev.valueHigh,
     valuationNotes: ev.reasoning,
+    marketNotes: ev.marketNotes,
     imageUrl: o.photos[0],
     acquiredAt: now(),
     acquiredFrom: o.from,

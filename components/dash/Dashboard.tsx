@@ -4,6 +4,7 @@ import type { Activity, Item, LogEvent, Trade, WatchItem } from "@/lib/types";
 import { OfferForm } from "@/components/OfferForm";
 import { BrowserAgent } from "./BrowserAgent";
 import { PortfolioChart } from "./PortfolioChart";
+import { ItemShowcase, type LotOffer } from "./ItemShowcase";
 import { CountUp, mult, money, Spark } from "./ui";
 
 interface State {
@@ -15,13 +16,14 @@ interface State {
   items: Item[];
   trades: Trade[];
   venues: { id: string; name: string; channel: string; permission: string; stats: { posts: number; offers: number; accepted: number } }[];
-  offers: { id: string; status: string; itemName: string; evaluation?: { estValueUsd: number; policyFlags: string[]; decision: string } }[];
+  offers: (LotOffer & { evaluation?: { estValueUsd: number; policyFlags: string[]; decision: string } })[];
   log: LogEvent[];
   activity: Activity[];
   watchlist: WatchItem[];
   history: { tick: number; at: string; value: number }[];
   postsCount: number;
   xHandle?: string;
+  roundIntervalSec?: number;
 }
 
 function useLive(ms = 2500) {
@@ -82,30 +84,52 @@ export function Dashboard() {
       <Masthead s={s} err={err} onOffer={() => setOfferOpen(true)} />
       <Tape s={s} />
 
-      {/* ------------------------------------------------ current lot */}
-      <section className="row lot">
-        <div className="c-7 lot-in" key={cur.id}>
-          <div className="lot-meta">
-            <span>Lot {pad2(lotNo)}</span>
-            <span>{cur.category}</span>
-            <span>{cur.acquiredFrom ? `from ${cur.acquiredFrom}` : "the starting item"}</span>
-            {isNew && <span className="new">Just traded</span>}
-            {done && <span className="new">Goal reached</span>}
-          </div>
-          <h1 className="lot-name">{cur.name}</h1>
-          <p className="lot-desc">{cur.description}</p>
-          <div className="lot-value">
-            <span className="v"><CountUp value={cur.estValueUsd} duration={1400} /></span>
-            <span className="est">
-              Estimate <b>{money(cur.valueLow)} – {money(cur.valueHigh)}</b><br />
-              {prevItem
-                ? <span className={`chg ${cur.estValueUsd < prevItem.estValueUsd ? "neg" : ""}`}>{mult(cur.estValueUsd / prevItem.estValueUsd)} on {prevItem.name}</span>
-                : <span className="muted">Where it all starts</span>}
-            </span>
-          </div>
+      {/* ------------------------------------------------ live agent (hero) */}
+      <section className="live">
+        <div className="live-h">
+          <span className="live-badge"><i />{s.mode === "demo" ? "Live · demo" : "Live"}</span>
+          <h2>Clippy, right now</h2>
+          <span className="aside">
+            round <b key={s.tickCount} className="num-tick">{s.tickCount}</b> · next round <Countdown last={s.lastTickAt} every={s.roundIntervalSec ?? 900} />
+          </span>
+        </div>
+        <BrowserAgent activity={s.activity} idle={done} />
+      </section>
+
+      {/* ------------------------------------------------ what it's holding */}
+      <ItemShowcase
+        item={cur}
+        prev={prevItem}
+        lotNo={lotNo}
+        offers={s.offers}
+        posts={s.activity.filter((a) => a.action === "submit").length}
+        isNew={!!isNew}
+        done={done}
+      />
+
+      <Road items={s.items} trades={s.trades} cur={cur} goal={s.goalUsd} />
+
+      {/* ------------------------------------------------ log + watchlist */}
+      <section className="row sec">
+        <div className="c-7">
+          <div className="sec-h"><span className="no">01</span><h2>Log</h2><span className="aside">{s.log.length} entries</span></div>
+          <Log log={s.log} />
         </div>
         <div className="c-5">
-          <dl className="facts">
+          <div className="sec-h"><span className="no">02</span><h2>Watchlist</h2><span className="aside">open offers & wanted</span></div>
+          <Watchlist items={s.watchlist} />
+        </div>
+      </section>
+
+      {/* ------------------------------------------------ chart + journey */}
+      <section className="row sec">
+        <div className="c-7">
+          <div className="sec-h"><span className="no">03</span><h2>Value held, round by round</h2></div>
+          <PortfolioChart history={s.history} goal={s.goalUsd} trades={tradeTicks} />
+        </div>
+        <div className="c-5">
+          <div className="sec-h"><span className="no">04</span><h2>The journey so far</h2></div>
+          <dl className="facts" style={{ marginTop: 0 }}>
             <div className="fact"><dt>Return since the paperclip</dt><dd className="big" style={{ color: "var(--gain)" }}><CountUp value={totalMult} format={mult} /></dd></div>
             <div className="fact"><dt>Best offer on the table<small>{bestOffer ? bestOffer.name : "None yet, asking around"}</small></dt>
               <dd>{bestOffer ? <>{money(bestOffer.estValueUsd)}<span className="x">{mult(bestOffer.multiplier)}</span></> : "—"}</dd></div>
@@ -114,32 +138,6 @@ export function Dashboard() {
             <div className="fact"><dt>Offers received<small>{declined} turned down by the rules (scams, banned items, cash)</small></dt><dd>{s.offers.length}</dd></div>
             <div className="fact"><dt>Posts made<small>across {s.venues.filter((v) => v.stats.posts).length} communities</small></dt><dd>{s.postsCount}</dd></div>
           </dl>
-        </div>
-      </section>
-
-      <Road items={s.items} trades={s.trades} cur={cur} goal={s.goalUsd} />
-
-      {/* ------------------------------------------------ session + log */}
-      <section className="row sec">
-        <div className="c-8">
-          <div className="sec-h"><span className="no">01</span><h2>What it's doing now</h2><span className="aside">replay of the agent's own actions</span></div>
-          <BrowserAgent activity={s.activity} idle={done} />
-        </div>
-        <div className="c-4">
-          <div className="sec-h"><span className="no">02</span><h2>Log</h2><span className="aside">{s.log.length} entries</span></div>
-          <Log log={s.log} />
-        </div>
-      </section>
-
-      {/* ------------------------------------------------ chart + watchlist */}
-      <section className="row sec">
-        <div className="c-7">
-          <div className="sec-h"><span className="no">03</span><h2>Value held, round by round</h2></div>
-          <PortfolioChart history={s.history} goal={s.goalUsd} trades={tradeTicks} />
-        </div>
-        <div className="c-5">
-          <div className="sec-h"><span className="no">04</span><h2>Watchlist</h2><span className="aside">open offers & wanted</span></div>
-          <Watchlist items={s.watchlist} />
         </div>
       </section>
 
@@ -173,6 +171,20 @@ export function Dashboard() {
       )}
     </div>
   );
+}
+
+// ================================================================ countdown to next round
+function Countdown({ last, every }: { last?: string; every: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!last) return <b>soon</b>;
+  const left = Math.round((Date.parse(last) + every * 1000 - now) / 1000);
+  if (left <= 0) return <b className="pulse-text">any moment</b>;
+  const m = Math.floor(left / 60), sec = left % 60;
+  return <b suppressHydrationWarning>in {m}:{String(sec).padStart(2, "0")}</b>;
 }
 
 // ================================================================ masthead + tape

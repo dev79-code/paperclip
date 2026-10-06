@@ -16,6 +16,7 @@ export async function POST(req: Request) {
   let a: Action;
   if (b.action === "reset") a = { type: "reset" };
   else if (b.action === "permission") a = { type: "admin", action: "permission", venueId: String(b.venueId), permission: b.permission };
+  else if (b.action === "item_image") a = { type: "admin", action: "item_image", url: String(b.url || "").trim() };
   else if (["approve", "reject", "received"].includes(b.action)) a = { type: "admin", action: b.action, offerId: String(b.offerId) };
   else return Response.json({ ok: false, result: "unknown action" }, { status: 400 });
 
