@@ -67,6 +67,8 @@ export interface Offer {
   itemName: string;
   itemDescription: string;
   photos: string[];
+  /** public link to where the offer was made (the reply/comment), if any */
+  sourceUrl?: string;
   createdAt: string;
   status: OfferStatus;
   evaluation?: Evaluation;

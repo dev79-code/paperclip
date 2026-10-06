@@ -49,12 +49,16 @@ export const xChannel: Channel = {
     const users = new Map<string, string>((j.includes?.users || []).map((u: any) => [u.id, u.username]));
     const media = new Map<string, string>((j.includes?.media || []).map((m: any) => [m.media_key, m.url]));
     for (const t of j.data || []) {
+      const handle = users.get(t.author_id) || t.author_id;
+      const ours = db.posts.find((p) => p.channel === "x" && p.externalId === t.conversation_id);
       out.push({
         channel: "x",
         venueId: venue.id,
-        from: "@" + (users.get(t.author_id) || t.author_id),
+        postId: ours?.id,
+        from: "@" + handle,
         text: t.text,
         threadRef: t.id,
+        url: `https://x.com/${handle}/status/${t.id}`,
         photos: (t.attachments?.media_keys || []).map((k: string) => media.get(k)).filter(Boolean),
       });
     }

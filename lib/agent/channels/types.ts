@@ -8,6 +8,8 @@ export interface Incoming {
   text: string;
   threadRef: string; // id we reply to (tweet id, reddit thing id, discourse topic id, email message id)
   photos: string[];
+  /** public link to the reply/mention itself, when there is one (never for DMs or email) */
+  url?: string;
   /** DEMO only: ground-truth item, so the simulator doesn't need an LLM */
   demo?: { name: string; description: string; category: string; value: number; liquidity: number; risk: number; story: number };
 }

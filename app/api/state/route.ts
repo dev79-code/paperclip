@@ -43,13 +43,23 @@ export async function GET() {
     items: db.items,
     trades: db.trades,
     venues: db.venues.map(({ id, name, channel, stats, permission }) => ({ id, name, channel, stats, permission })),
-    offers: db.offers.slice(-150).map(({ sim, threadRef, messages, rawText, ...o }) => ({ ...o, from: o.channel === "web" || o.channel === "email" ? "private" : o.from })),
+    offers: db.offers.slice(-150).map(({ sim, threadRef, messages, rawText, ...o }) => ({
+      ...o,
+      from: o.channel === "web" || o.channel === "email" ? "private" : o.from,
+      postUrl: db.posts.find((p) => p.id === o.postId)?.url,
+    })),
     log: db.log.slice(-120),
     activity: db.activity.slice(-80),
     watchlist: db.watchlist,
     history: db.history.slice(-400),
     postsCount: db.posts.length,
     xHandle: config.xHandle,
+    // Real posts & public replies on X (embedded on the site). Demo posts have no real id → shown as previews.
+    xFeed: [
+      ...db.posts.filter((p) => p.channel === "x" && /^\d{6,}$/.test(p.externalId || "")).map((p) => ({ kind: "post", id: p.externalId!, at: p.createdAt, url: p.url, text: p.title })),
+      ...db.offers.filter((o) => o.channel === "x" && o.sourceUrl && /^\d{6,}$/.test(o.threadRef || "")).map((o) => ({ kind: "reply", id: o.threadRef!, at: o.createdAt, url: o.sourceUrl, text: o.itemName, from: o.from })),
+    ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 6),
+    xPreview: db.posts.filter((p) => p.channel === "x").slice(-3).reverse().map((p) => ({ at: p.createdAt, text: p.title })),
     roundIntervalSec: config.mode === "demo" && process.env.DEMO_AUTOPLAY !== "0" ? TICK_S : config.tickMinutes * 60,
   });
 }

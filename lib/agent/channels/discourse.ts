@@ -46,6 +46,7 @@ export const discourseChannel: Channel = {
           from: "@" + post.username,
           text: post.cooked.replace(/<[^>]+>/g, " "),
           threadRef: String(p.externalId),
+          url: `${site(venue).base}/t/${p.externalId}/${post.post_number}`,
           photos: [...post.cooked.matchAll(/<img[^>]+src="([^"]+)"/g)].map((m: RegExpMatchArray) => m[1]).slice(0, 6),
         });
         db.cursors[key] = String(post.post_number);

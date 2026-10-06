@@ -5,6 +5,8 @@ import { OfferForm } from "@/components/OfferForm";
 import { BrowserAgent } from "./BrowserAgent";
 import { PortfolioChart } from "./PortfolioChart";
 import { ItemShowcase, type LotOffer } from "./ItemShowcase";
+import { Pipeline, type PipeOffer } from "./Pipeline";
+import { XFeed, type XFeedItem } from "./XFeed";
 import { CountUp, mult, money, Spark } from "./ui";
 
 interface State {
@@ -16,7 +18,7 @@ interface State {
   items: Item[];
   trades: Trade[];
   venues: { id: string; name: string; channel: string; permission: string; stats: { posts: number; offers: number; accepted: number } }[];
-  offers: (LotOffer & { evaluation?: { estValueUsd: number; policyFlags: string[]; decision: string } })[];
+  offers: (LotOffer & PipeOffer & { evaluation?: { estValueUsd: number; policyFlags: string[]; decision: string; category?: string } })[];
   log: LogEvent[];
   activity: Activity[];
   watchlist: WatchItem[];
@@ -24,6 +26,8 @@ interface State {
   postsCount: number;
   xHandle?: string;
   roundIntervalSec?: number;
+  xFeed?: XFeedItem[];
+  xPreview?: { at: string; text: string }[];
 }
 
 function useLive(ms = 2500) {
@@ -96,6 +100,8 @@ export function Dashboard() {
         <BrowserAgent activity={s.activity} idle={done} />
       </section>
 
+      <XFeed feed={s.xFeed ?? []} preview={s.xPreview ?? []} handle={s.xHandle ?? "theagentclippy"} mode={s.mode} />
+
       {/* ------------------------------------------------ what it's holding */}
       <ItemShowcase
         item={cur}
@@ -107,32 +113,20 @@ export function Dashboard() {
         done={done}
       />
 
+      <Pipeline offers={s.offers} watchlist={s.watchlist} current={cur.estValueUsd} />
+
       <Road items={s.items} trades={s.trades} cur={cur} goal={s.goalUsd} />
 
-      {/* ------------------------------------------------ log + watchlist */}
+      {/* ------------------------------------------------ log + journey */}
       <section className="row sec">
         <div className="c-7">
-          <div className="sec-h"><span className="no">01</span><h2>Log</h2><span className="aside">{s.log.length} entries</span></div>
+          <div className="sec-h"><span className="no">02</span><h2>Log</h2><span className="aside">{s.log.length} entries</span></div>
           <Log log={s.log} />
         </div>
         <div className="c-5">
-          <div className="sec-h"><span className="no">02</span><h2>Watchlist</h2><span className="aside">open offers & wanted</span></div>
-          <Watchlist items={s.watchlist} />
-        </div>
-      </section>
-
-      {/* ------------------------------------------------ chart + journey */}
-      <section className="row sec">
-        <div className="c-7">
-          <div className="sec-h"><span className="no">03</span><h2>Value held, round by round</h2></div>
-          <PortfolioChart history={s.history} goal={s.goalUsd} trades={tradeTicks} />
-        </div>
-        <div className="c-5">
-          <div className="sec-h"><span className="no">04</span><h2>The journey so far</h2></div>
+          <div className="sec-h"><span className="no">03</span><h2>The journey so far</h2></div>
           <dl className="facts" style={{ marginTop: 0 }}>
             <div className="fact"><dt>Return since the paperclip</dt><dd className="big" style={{ color: "var(--gain)" }}><CountUp value={totalMult} format={mult} /></dd></div>
-            <div className="fact"><dt>Best offer on the table<small>{bestOffer ? bestOffer.name : "None yet, asking around"}</small></dt>
-              <dd>{bestOffer ? <>{money(bestOffer.estValueUsd)}<span className="x">{mult(bestOffer.multiplier)}</span></> : "—"}</dd></div>
             <div className="fact"><dt>Trades so far<small>average step {avgStep.toFixed(2)}×</small></dt><dd>{lotNo}</dd></div>
             <div className="fact"><dt>Trades left at this pace</dt><dd>{done ? "0" : `~${toGo}`}</dd></div>
             <div className="fact"><dt>Offers received<small>{declined} turned down by the rules (scams, banned items, cash)</small></dt><dd>{s.offers.length}</dd></div>
@@ -141,16 +135,22 @@ export function Dashboard() {
         </div>
       </section>
 
-      {/* ------------------------------------------------ provenance + channels */}
+      {/* ------------------------------------------------ chart + channels */}
       <section className="row sec">
-        <div className="c-8">
-          <div className="sec-h"><span className="no">05</span><h2>Provenance</h2><span className="aside">every trade, in order</span></div>
-          <Provenance items={s.items} trades={s.trades} cur={cur} />
+        <div className="c-7">
+          <div className="sec-h"><span className="no">04</span><h2>Value held, round by round</h2></div>
+          <PortfolioChart history={s.history} goal={s.goalUsd} trades={tradeTicks} />
         </div>
-        <div className="c-4">
-          <div className="sec-h"><span className="no">06</span><h2>Where it asks</h2></div>
+        <div className="c-5">
+          <div className="sec-h"><span className="no">05</span><h2>Where it asks</h2></div>
           <Channels venues={s.venues} />
         </div>
+      </section>
+
+      {/* ------------------------------------------------ provenance */}
+      <section className="sec">
+        <div className="sec-h"><span className="no">06</span><h2>Provenance</h2><span className="aside">every trade, in order</span></div>
+        <Provenance items={s.items} trades={s.trades} cur={cur} />
       </section>
 
       <footer className="foot">

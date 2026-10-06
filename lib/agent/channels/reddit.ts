@@ -55,7 +55,7 @@ export const redditChannel: Channel = {
         const c = ch.data;
         if (!c?.name || seen.has(c.name) || c.author === process.env.REDDIT_USERNAME) continue;
         seen.add(c.name);
-        out.push({ channel: "reddit", venueId: venue.id, postId: p.id, from: "u/" + c.author, text: c.body, threadRef: c.name, photos: extractLinks(c.body) });
+        out.push({ channel: "reddit", venueId: venue.id, postId: p.id, from: "u/" + c.author, text: c.body, threadRef: c.name, url: c.permalink ? `https://www.reddit.com${c.permalink}` : undefined, photos: extractLinks(c.body) });
       }
     }
     // 2) private messages (shared across reddit venues – only pull once per tick via first venue)

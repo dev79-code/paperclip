@@ -117,6 +117,7 @@ async function listen(db: DB, item: Item) {
           itemName: parsed.itemName,
           itemDescription: parsed.itemDescription,
           photos: msg.photos,
+          sourceUrl: msg.url,
           createdAt: now(),
           status: "new",
           messages: [{ role: "them", text: msg.text, at: now() }],
