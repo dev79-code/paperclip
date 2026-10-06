@@ -28,35 +28,53 @@ Replace these placeholders throughout:
   ```
 
 ## 1. Create the droplet (DigitalOcean dashboard)
-Create → Droplets → **Ubuntu 24.04**, Basic, **2 GB RAM** (Next.js builds need it; 1 GB works with swap), add your SSH key.
+1. On your computer, if you don't have an SSH key yet, run `ssh-keygen -t ed25519` and press Enter through the prompts. Then show it with `cat ~/.ssh/id_ed25519.pub`.
+2. In DigitalOcean, go to **Create → Droplets**:
+   - **Region:** closest to you (e.g. London LON1)
+   - **Image:** Ubuntu **24.04 (LTS) x64**
+   - **Size:** Basic → Regular → **2 GB / 1 CPU** (about $12/mo)
+   - **Authentication:** SSH Key → **New SSH Key** → paste your `.pub` key
+   - **Hostname:** `paperclip`
+   - Optional: tick **Backups**
+3. Click **Create Droplet** and copy its **IPv4** address (`YOUR_IP`).
 
 ## 2. DNS (skip if using sslip.io)
-At your domain provider, add an **A record**: `api` → `YOUR_IP`.
+At your domain provider, add an **A record**: name `api`, value `YOUR_IP`. Wait a few minutes, then check that `ping api.yourdomain.com` shows your IP.
 
-## 3. Secure the server (run on your computer, then on the VPS)
+## 3. Run the one-shot setup script (as root)
 ```bash
 ssh root@YOUR_IP
-adduser clip                      # pick a password
-usermod -aG sudo clip
-rsync --archive --chown=clip:clip ~/.ssh /home/clip
-ufw allow OpenSSH && ufw allow 80 && ufw allow 443 && ufw --force enable
+curl -fsSL https://raw.githubusercontent.com/you/paperclip/main/scripts/setup-vps.sh -o setup-vps.sh
+# private repo? Raw URLs need auth, so paste the file instead: nano setup-vps.sh, paste, save
+API_DOMAIN=api.yourdomain.com bash setup-vps.sh
+```
+The script:
+- creates user `clip` (it asks you to pick a password)
+- sets up the firewall (SSH, 80, 443)
+- adds 2 GB of swap
+- installs Node 20, git and pm2
+- installs Caddy with HTTPS for your domain
+- turns on pm2 start-on-boot
+- creates a **deploy key**
+
+It prints the deploy key at the end.
+
+## 4. Give the server read access to the GitHub repo
+The repo owner goes to the GitHub repo → **Settings → Deploy keys → Add deploy key**:
+- Title: `paperclip-vps`
+- Key: the `ssh-ed25519 …` line the script printed
+- Leave **Allow write access** unticked → **Add key**
+
+Then log in as the app user:
+```bash
 exit
 ssh clip@YOUR_IP
-```
-
-## 4. Install Node 20, git, pm2
-```bash
-sudo apt update && sudo apt upgrade -y
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt install -y nodejs git
-sudo npm install -g pm2
-node -v   # should print v20.x
 ```
 
 ## 5. Get the code
 ```bash
 cd ~
-git clone https://github.com/you/paperclip.git    # private repo: use a GitHub fine-grained token as the password
+git clone git@github.com:you/paperclip.git
 cd paperclip
 npm ci
 cp .env.example .env
@@ -82,22 +100,15 @@ Do **not** set `BACKEND_URL` on the VPS.
 npm run build
 pm2 start ecosystem.config.cjs
 pm2 save
-pm2 startup systemd          # copy and run the sudo command it prints
 pm2 logs --lines 30          # you should see "tick 1 done …" from paperclip-agent
 ```
 
-## 7. HTTPS with Caddy
+## 7. Check HTTPS
+Caddy was configured by the setup script. From your computer, run:
 ```bash
-sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
-sudo apt update && sudo apt install -y caddy
-echo 'api.yourdomain.com {
-  reverse_proxy localhost:3000
-}' | sudo tee /etc/caddy/Caddyfile
-sudo systemctl reload caddy
+curl https://api.yourdomain.com/api/state
 ```
-Check it from your computer: `curl https://api.yourdomain.com/api/state` should return JSON.
+It should return JSON. If it doesn't, check DNS (step 2) and run `sudo systemctl status caddy` on the VPS.
 
 ## 8. Log the agent's X account in (once)
 On **your computer**, open an SSH tunnel so X's callback reaches the VPS:
