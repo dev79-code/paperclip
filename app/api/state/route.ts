@@ -48,5 +48,6 @@ export async function GET() {
     watchlist: db.watchlist,
     history: db.history.slice(-400),
     postsCount: db.posts.length,
+    xHandle: config.xHandle,
   });
 }

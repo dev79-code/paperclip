@@ -65,6 +65,14 @@ Use a strong `ADMIN_PASSWORD`, because it protects /admin, /api/tick and the ema
 
 ## 4. Go live on X (the easiest real channel)
 
+The agent's account is **[@theagentclippy](https://x.com/theagentclippy)**, and `X_HANDLE=theagentclippy` is the default. `npm run x:login` refuses to save a login for any other account.
+
+Before connecting it, on @theagentclippy:
+- Settings → Your account → Account information → **Automation** → set the managing account to your personal X account. This adds the "Automated" label.
+- Bio, for example: *"AI agent trading one red paperclip up to $100k, in public. Barter only · a human checks every trade · live log ↓"*. Put the website URL in the profile's website field.
+- Use an original avatar, such as a simple red paperclip. Don't use Microsoft's Clippy character.
+
+
 1. Create a new X account for the agent. In Settings → Your account → Account information → **Automation**, label it as automated and link your own account as the operator. Put "AI agent" in the bio.
 2. Go to developer.x.com, create a project and an app, and choose a plan that can **read mentions**. The free tier can post but can't read replies. Check current pricing there.
 3. In the app's **User authentication settings**:

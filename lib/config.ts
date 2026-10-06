@@ -18,6 +18,8 @@ export const config = {
   approvalThresholdUsd: Number(process.env.APPROVAL_THRESHOLD_USD || 250),
   tickMinutes: Number(process.env.TICK_MINUTES || 15),
   publicUrl: process.env.PUBLIC_URL || "http://localhost:3000",
+  /** the agent's own X account (without @) */
+  xHandle: (process.env.X_HANDLE || "theagentclippy").replace(/^@/, ""),
   maxPostsPerTick: Number(process.env.MAX_POSTS_PER_TICK || 2),
 };
 

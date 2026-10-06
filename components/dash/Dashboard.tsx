@@ -21,6 +21,7 @@ interface State {
   watchlist: WatchItem[];
   history: { tick: number; at: string; value: number }[];
   postsCount: number;
+  xHandle?: string;
 }
 
 function useLive(ms = 2500) {
@@ -197,6 +198,7 @@ function Masthead({ s, err, onOffer }: { s: State; err: boolean; onOffer: () => 
         <span>Round <b key={s.tickCount} className="num-tick">{s.tickCount}</b></span>
         <span suppressHydrationWarning>{now}</span>
         {err && <span style={{ color: "var(--warn)" }}>reconnecting</span>}
+        {s.xHandle && <a href={`https://x.com/${s.xHandle}`} target="_blank" rel="noreferrer">@{s.xHandle}</a>}
         <a href="/admin">Custodian</a>
         <button onClick={onOffer}>Make an offer</button>
       </div>

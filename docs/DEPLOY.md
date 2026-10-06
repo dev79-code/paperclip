@@ -90,6 +90,7 @@ PUBLIC_URL=https://paperclip.vercel.app        # your Vercel URL (update after s
 ADMIN_PASSWORD=<long random string>
 APPROVAL_THRESHOLD_USD=50
 TICK_MINUTES=15
+X_HANDLE=theagentclippy
 X_CLIENT_ID=...
 X_CLIENT_SECRET=...
 ```
@@ -119,7 +120,7 @@ In that same SSH session:
 ```bash
 cd ~/paperclip && npm run x:login
 ```
-In your browser, logged into X as the **agent** account, open the printed URL and click Authorize.
+In your browser, logged into X as **@theagentclippy**, open the printed URL and click Authorize.
 The token is saved to `~/paperclip/data/x-token.json` on the VPS and refreshes itself. Ignore the env values it prints; you don't need them here.
 
 ## 9. Test with AI in demo mode

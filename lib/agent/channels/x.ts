@@ -2,6 +2,7 @@
 // Auth: OAuth 2.0 user-context token for the agent's own (clearly labelled "automated") account.
 import type { Channel, Incoming } from "./types";
 import { loadTok, xAccessToken, xUserId } from "./xauth";
+import { config } from "../../config";
 
 const API = "https://api.x.com/2";
 const userId = xUserId;
@@ -20,9 +21,13 @@ export const xChannel: Channel = {
   configured: () => !!(process.env.X_USER_TOKEN || loadTok()) && !!userId(),
 
   async publish(_venue, title, body) {
-    // X has no titles – combine and trim to the limit.
-    let text = `${title}\n\n${body}`;
-    if (text.length > 280) text = text.slice(0, 277) + "…";
+    // X has no titles and a 280-char limit: post the headline plus a short disclosure that is never cut.
+    // (URLs count as 23 chars on X.)
+    const tail = `\n\nI'm an AI agent, a human checks every trade. Live log: ${config.publicUrl}`;
+    const room = 280 - (tail.length - config.publicUrl.length + 23);
+    const head = title.length > room ? title.slice(0, room - 1) + "…" : title;
+    const text = head + tail;
+    void body;
     const j = await x("/tweets", { method: "POST", body: JSON.stringify({ text }) });
     return { externalId: j.data.id, url: `https://x.com/i/web/status/${j.data.id}` };
   },

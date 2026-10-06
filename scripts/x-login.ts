@@ -18,7 +18,8 @@ const state = crypto.randomBytes(8).toString("hex");
     response_type: "code", client_id: process.env.X_CLIENT_ID, redirect_uri: REDIRECT,
     scope: "tweet.read tweet.write users.read offline.access", state, code_challenge: challenge, code_challenge_method: "S256",
   });
-  console.log("\n1) Log into X as the AGENT's account in your browser.\n2) Open this URL and click Authorize:\n\n" + url + "\n");
+  console.log(`\n1) Log into X as @${(process.env.X_HANDLE || "theagentclippy").replace(/^@/, "")} in your browser.`);
+  console.log("\n2) Open this URL and click Authorize:\n\n" + url + "\n");
   const srv = http.createServer(async (req, res) => {
     const u = new URL(req.url!, REDIRECT);
     if (u.pathname !== "/callback") return res.end();
@@ -26,6 +27,12 @@ const state = crypto.randomBytes(8).toString("hex");
       if (u.searchParams.get("state") !== state) throw new Error("state mismatch");
       const tok = await tokenRequest({ grant_type: "authorization_code", code: u.searchParams.get("code")!, redirect_uri: REDIRECT, code_verifier: verifier });
       const me = await (await fetch("https://api.x.com/2/users/me", { headers: { Authorization: `Bearer ${tok.access_token}` } })).json();
+      const want = (process.env.X_HANDLE || "theagentclippy").replace(/^@/, "").toLowerCase();
+      if (me.data?.username?.toLowerCase() !== want) {
+        res.end(`You authorised @${me.data?.username}, but the agent account is @${want}. Log into @${want} on x.com and run npm run x:login again.`);
+        console.error(`Wrong account: got @${me.data?.username}, expected @${want}. Nothing saved.`);
+        return srv.close();
+      }
       saveTok({ ...tok, user_id: me.data?.id });
       res.end(`Logged in as @${me.data?.username}. You can close this tab.`);
       console.log(`Saved data/x-token.json for @${me.data?.username} (id ${me.data?.id}). Tokens refresh automatically.`);
