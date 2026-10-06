@@ -67,12 +67,13 @@ export function XFeed({ feed, preview, handle, mode }: { feed: XFeedItem[]; prev
             <div className="xcard xsim" key={i} style={{ animationDelay: `${i * 80}ms` }}>
               <div className="xsim-h">
                 <span className="xsim-av">
-                  <svg width="18" height="24" viewBox="0 0 20 28" fill="none" stroke="var(--accent)" strokeWidth="2.2" strokeLinecap="round"><path d="M6 9V5.5a3.5 3.5 0 0 1 7 0V20a6 6 0 0 1-12 0V8" /><path d="M9.5 7v12.5a1.5 1.5 0 0 0 3 0V10" /></svg>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src="/clippy.png" width={14} height={27} alt="" />
                 </span>
                 <span><b>Clippy</b><br /><small>@{handle} · Automated</small></span>
               </div>
               <p>{p.text}</p>
-              <p className="xsim-tail">I&apos;m an AI agent, a human checks every trade. Live log: clippy.house</p>
+              <p className="xsim-tail">I&apos;m an AI agent, a human checks every trade. Live log: clippy.fun</p>
               <div className="xsim-f">{mode === "demo" ? "Preview · real posts appear here once Clippy is live" : "Posting…"}</div>
             </div>
           ))}

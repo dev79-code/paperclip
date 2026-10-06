@@ -7,6 +7,7 @@ import { PortfolioChart } from "./PortfolioChart";
 import { ItemShowcase, type LotOffer } from "./ItemShowcase";
 import { Pipeline, type PipeOffer } from "./Pipeline";
 import { XFeed, type XFeedItem } from "./XFeed";
+import { Treasury, type TreasuryData } from "./Treasury";
 import { CountUp, mult, money, Spark } from "./ui";
 
 interface State {
@@ -26,8 +27,11 @@ interface State {
   postsCount: number;
   xHandle?: string;
   roundIntervalSec?: number;
+  nextTickAt?: string;
+  roundRange?: [number, number] | null;
   xFeed?: XFeedItem[];
   xPreview?: { at: string; text: string }[];
+  treasury?: TreasuryData;
 }
 
 function useLive(ms = 2500) {
@@ -94,9 +98,11 @@ export function Dashboard() {
           <span className="live-badge"><i />{s.mode === "demo" ? "Live · demo" : "Live"}</span>
           <h2>Clippy, right now</h2>
           <span className="aside">
-            round <b key={s.tickCount} className="num-tick">{s.tickCount}</b> · next round <Countdown last={s.lastTickAt} every={s.roundIntervalSec ?? 900} />
+            round <b key={s.tickCount} className="num-tick">{s.tickCount}</b>
+            {s.roundRange && <> · every {s.roundRange[0]}–{s.roundRange[1]} min</>}
           </span>
         </div>
+        <RoundTimer last={s.lastTickAt} next={s.nextTickAt} round={s.tickCount} done={done} />
         <BrowserAgent activity={s.activity} idle={done} />
       </section>
 
@@ -114,6 +120,8 @@ export function Dashboard() {
       />
 
       <Pipeline offers={s.offers} watchlist={s.watchlist} current={cur.estValueUsd} />
+
+      {s.treasury && <Treasury t={s.treasury} />}
 
       <Road items={s.items} trades={s.trades} cur={cur} goal={s.goalUsd} />
 
@@ -174,17 +182,33 @@ export function Dashboard() {
 }
 
 // ================================================================ countdown to next round
-function Countdown({ last, every }: { last?: string; every: number }) {
-  const [now, setNow] = useState(Date.now());
+/** Big countdown to the next round with a bar that fills up between rounds. */
+function RoundTimer({ last, next, round, done }: { last?: string; next?: string; round: number; done: boolean }) {
+  const [now, setNow] = useState(0);
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 250);
     return () => clearInterval(t);
   }, []);
-  if (!last) return <b>soon</b>;
-  const left = Math.round((Date.parse(last) + every * 1000 - now) / 1000);
-  if (left <= 0) return <b className="pulse-text">any moment</b>;
-  const m = Math.floor(left / 60), sec = left % 60;
-  return <b suppressHydrationWarning>in {m}:{String(sec).padStart(2, "0")}</b>;
+  const a = Date.parse(last || ""), b = Date.parse(next || "");
+  const known = now > 0 && a > 0 && b > a;
+  const left = known ? Math.max(0, Math.ceil((b - now) / 1000)) : 0;
+  const pct = known ? Math.min(100, ((now - a) / (b - a)) * 100) : 0;
+  const busy = known && left === 0;
+  const label = done ? "Goal reached – resting" : !known ? "Waiting for the first round" : busy ? `Round ${round + 1} running…` : "Next round in";
+  return (
+    <div className={`rtimer ${busy ? "busy" : ""}`}>
+      <div className="rtimer-row">
+        <span className="rtimer-l">{label}</span>
+        {known && !busy && !done && (
+          <b className="rtimer-t" suppressHydrationWarning>
+            {Math.floor(left / 60)}:{String(left % 60).padStart(2, "0")}
+          </b>
+        )}
+      </div>
+      <div className="rtimer-bar"><i style={{ width: `${busy ? 100 : pct}%` }} /></div>
+    </div>
+  );
 }
 
 // ================================================================ masthead + tape
@@ -199,10 +223,9 @@ function Masthead({ s, err, onOffer }: { s: State; err: boolean; onOffer: () => 
   return (
     <header className="mast">
       <a className="mast-title" href="/">
-        <svg width="26" height="34" viewBox="0 0 20 28" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" aria-hidden>
-          <path d="M6 9V5.5a3.5 3.5 0 0 1 7 0V20a6 6 0 0 1-12 0V8" /><path d="M9.5 7v12.5a1.5 1.5 0 0 0 3 0V10" />
-        </svg>
-        Paperclip
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img className="mast-logo" src="/clippy.png" width={106} height={204} alt="" aria-hidden />
+        <span>Clippy<i className="mast-tld">.fun</i></span>
       </a>
       <span className="mast-sub">one red paperclip, traded up to $100,000</span>
       <div className="mast-right">

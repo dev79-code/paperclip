@@ -103,5 +103,6 @@ export function seed(): DB {
     activity: [],
     watchlist: [],
     history: [{ tick: 0, at: now, value: 0.01 }],
+    payouts: [],
   };
 }

@@ -61,7 +61,7 @@ export default function Admin() {
   return (
     <main className="wrap">
       <header className="top">
-        <a href="/" className="brand">← Paperclip · Custodian</a>
+        <a href="/" className="brand">← Clippy.fun · Custodian</a>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={runTick} disabled={busy}>Run one round now</button>
           <button className="ghost" disabled={busy} onClick={() => confirm("Reset everything back to one paperclip?") && act({ action: "reset" })}>Reset</button>
@@ -98,6 +98,8 @@ export default function Admin() {
           </OfferCard>
         ))}
       </Section>
+
+      <WalletAdmin db={db as any} busy={busy} act={act} />
 
       <Section title="Venues & permissions" empty="">
         <div className="card table-scroll">
@@ -173,5 +175,71 @@ function OfferCard({ o, cur, children }: { o: Offer; cur: number; children: Reac
       {o.photos.length > 0 && <p className="small">Photos: {o.photos.map((p, i) => <a key={i} href={p} target="_blank" rel="noreferrer">[{i + 1}] </a>)}</p>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>{children}</div>
     </div>
+  );
+}
+
+function WalletAdmin({ db, busy, act }: { db: any; busy: boolean; act: (b: Record<string, string>) => void }) {
+  const t = db.treasury;
+  if (!t) return null;
+  const L = db.walletLimits || {};
+  const payees: Record<string, string> = db.payees || {};
+  const pending = (db.payouts || []).filter((p: any) => ["awaiting_approval", "failed", "needs_address"].includes(p.status)).reverse();
+  return (
+    <section style={{ marginTop: 24 }}>
+      <h2>Wallet</h2>
+      <div className="card" style={{ display: "grid", gap: 10 }}>
+        {!t.enabled && <p className="small" style={{ color: "var(--warn)", margin: 0 }}>Payments are switched off. Set WALLET_ENABLED=1 in .env to turn them on.</p>}
+        <div className="small" style={{ display: "flex", gap: 18, flexWrap: "wrap", alignItems: "center" }}>
+          <span>Network <b>{t.network}</b></span>
+          <span>Address <b className="mono">{t.address || "none – run npm run wallet -- create"}</b></span>
+          <span>Balance <b>{t.balance ? `${t.balance.usdc.toFixed(2)} USDC · ${t.balance.sol.toFixed(4)} SOL` : "—"}</b></span>
+          <span>Spent 24h <b>${t.spentToday} / ${t.dailyLimit}</b></span>
+          <span style={{ marginLeft: "auto" }}>
+            {t.paused
+              ? <button disabled={busy} onClick={() => act({ action: "wallet_resume" })}>Resume payments</button>
+              : <button className="ghost" disabled={busy} onClick={() => act({ action: "wallet_pause" })}>Pause all payments</button>}
+          </span>
+        </div>
+        <div className="small muted">
+          Auto-pay limits: ${L.perPayment} per payment · ${L.perDay} per day · ${L.perRecipientDay} per person per day · shipping ${L.shipping} · sweetener up to ${L.sweetenerMax} ({L.sweetenerPctOfItem}% of item) · tips ${L.tip} (max {L.tipsPerDay}/day)
+        </div>
+      </div>
+
+      <h2 style={{ marginTop: 16 }}>Payments needing you</h2>
+      {pending.length === 0 ? <p className="muted small">Nothing waiting.</p> : (
+        <div className="grid">
+          {pending.map((p: any) => (
+            <div className="card" key={p.id} style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+              <div style={{ flex: "1 1 280px" }}>
+                <b>${p.usd} {p.token}</b> · {p.purpose} → {p.toLabel || "?"} <span className="mono small muted">{p.to || "(no address yet)"}</span>
+                <div className="small muted">{p.reason}{p.why ? ` · ${p.why}` : ""}</div>
+              </div>
+              {p.status !== "needs_address" && <button disabled={busy} onClick={() => confirm(`Send $${p.usd} ${p.token} to ${p.to}?`) && act({ action: "wallet_approve", payoutId: p.id })}>Approve & send</button>}
+              <button className="ghost" disabled={busy} onClick={() => act({ action: "wallet_reject", payoutId: p.id })}>Veto</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <h2 style={{ marginTop: 16 }}>Send a payment</h2>
+      <form className="card" style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const f = new FormData(e.currentTarget);
+          const to = String(f.get("to") || "");
+          const usd = String(f.get("usd") || "");
+          if (!confirm(`Send $${usd} to ${to}? This moves real money if the wallet is live.`)) return;
+          act({ action: "wallet_manual", purpose: String(f.get("purpose")), to, usd, reason: String(f.get("reason") || ""), label: String(f.get("label") || "") });
+          (e.target as HTMLFormElement).reset();
+        }}>
+        <select name="purpose" defaultValue="tip"><option value="tip">Tip / bounty (SOL)</option><option value="cost">Running cost (USDC, approved supplier)</option></select>
+        <input name="to" list="payees" placeholder="Recipient Solana address" required style={{ flex: "2 1 260px", margin: 0 }} />
+        <datalist id="payees">{Object.entries(payees).map(([n, a]) => <option key={n} value={a}>{n}</option>)}</datalist>
+        <input name="label" placeholder="Who (e.g. @handle)" style={{ flex: "1 1 120px", margin: 0 }} />
+        <input name="usd" type="number" step="0.01" min="0.01" placeholder="USD" required style={{ width: 100, margin: 0 }} />
+        <input name="reason" placeholder="Reason" style={{ flex: "2 1 200px", margin: 0 }} />
+        <button disabled={busy}>Send</button>
+      </form>
+    </section>
   );
 }

@@ -23,7 +23,7 @@ export async function sendEmail(to: string, subject: string, text: string, inRep
       from: process.env.EMAIL_FROM,
       to,
       subject,
-      text: text + "\n\n—\nNot interested? Reply STOP and Paperclip will never email you again.",
+      text: text + "\n\n—\nNot interested? Reply STOP and Clippy will never email you again.",
       headers: inReplyTo ? { "In-Reply-To": inReplyTo, References: inReplyTo } : undefined,
     }),
   });
@@ -58,6 +58,6 @@ export const emailChannel: Channel = {
   async reply(threadRef, text) {
     // threadRef = "<to-address>|<message-id>"
     const [to, mid] = threadRef.split("|");
-    await sendEmail(to, "Re: your trade with Paperclip", text, mid);
+    await sendEmail(to, "Re: your trade with Clippy", text, mid);
   },
 };

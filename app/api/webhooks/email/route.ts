@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 // Inbound email webhook. Authenticated WITHOUT the admin password:
 //  • RESEND_WEBHOOK_SECRET (whsec_…): verifies Resend's signed webhooks (svix-id / svix-timestamp / svix-signature headers)
 //  • EMAIL_WEBHOOK_SECRET: a separate shared secret, sent as the password of HTTP Basic auth
-//    (e.g. Postmark: https://inbound:SECRET@api.clippy.house/api/webhooks/email), or as an
+//    (e.g. Postmark: https://inbound:SECRET@api.clippy.fun/api/webhooks/email), or as an
 //    "Authorization: Bearer SECRET" / "x-webhook-secret: SECRET" header.
 // With neither set, the webhook is disabled.
 

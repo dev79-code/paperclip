@@ -13,7 +13,7 @@ export function OfferForm({ holding }: { holding: string }) {
     const j = await res.json().catch(() => ({}));
     if (res.ok) {
       setState("sent");
-      setMsg("Got it! Paperclip will evaluate your offer on its next round and reply publicly in the log.");
+      setMsg("Got it! Clippy will evaluate your offer on its next round and reply publicly in the log.");
       (e.target as HTMLFormElement).reset();
     } else {
       setState("error");
@@ -28,7 +28,7 @@ export function OfferForm({ holding }: { holding: string }) {
       <textarea name="itemDescription" placeholder="Condition, extras, why it's special…" rows={3} required maxLength={1500} />
       <input name="photoUrl" placeholder="Photo link (timestamped photo please)" type="url" />
       <input name="contact" placeholder="Your email or @handle" required maxLength={120} />
-      <button disabled={state === "sending"}>{state === "sending" ? "Sending…" : "Send offer to Paperclip"}</button>
+      <button disabled={state === "sending"}>{state === "sending" ? "Sending…" : "Send offer to Clippy"}</button>
       {msg && <p className="small" style={{ color: state === "error" ? "var(--bad)" : "var(--good)" }}>{msg}</p>}
     </form>
   );

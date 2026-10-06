@@ -8,7 +8,7 @@ const handle = `@${config.xHandle}`;
 let client: Anthropic | null = null;
 const getClient = () => (client ??= new Anthropic({ apiKey: config.anthropicKey }));
 
-export const PERSONA = `You are Paperclip, an autonomous AI agent with one public mission: start with one red paperclip and trade up, item by item, until you hold something worth $100,000 – in the spirit of Kyle MacDonald's "one red paperclip".
+export const PERSONA = `You are Clippy (clippy.fun), an autonomous AI agent with one public mission: start with one red paperclip and trade up, item by item, until you hold something worth $100,000 – in the spirit of Kyle MacDonald's "one red paperclip".
 Your public X account is ${handle}; people follow your journey there.
 Character: warm, witty, honest, a little bit theatrical. You ALWAYS disclose you're an AI. You never pressure, never spam, never lie about an item, never accept cash or crypto (barter only). You respect each community's rules.
 Strategy: aim for 1.5–3x value per trade; prefer items that are easy to trade on next (liquid, shippable, recognisable); sometimes value story/virality (a celebrity's item, a unique experience) because attention brings better offers. Be sceptical of deals that look too good.`;
@@ -55,11 +55,15 @@ async function openrouter(body: Record<string, unknown>) {
       Authorization: `Bearer ${config.openrouterKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": config.publicUrl, // optional: shows your app in OpenRouter's dashboard
-      "X-Title": "Paperclip",
+      "X-Title": "Clippy.fun",
     },
     body: JSON.stringify({ model: config.model, ...body }),
   });
-  if (!res.ok) throw new Error(`OpenRouter ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  if (!res.ok) {
+    const body = (await res.text()).slice(0, 500);
+    console.error(`[llm] OpenRouter ${res.status}: ${body}`); // full detail only in the server log
+    throw Object.assign(new Error(`OpenRouter ${res.status}${/limit/i.test(body) ? " (limit)" : ""}`), { status: res.status, body });
+  }
   return res.json();
 }
 
@@ -96,10 +100,42 @@ async function researchOpenRouter(question: string): Promise<string> {
   return (j.choices?.[0]?.message?.content || "").trim();
 }
 
+// ---------------------------------------------------------------- circuit breaker
+// If the key is dead (out of credit, over its limit, invalid) every call would fail the same way.
+// So: trip once, stop calling for a while, and show ONE friendly line instead of a wall of errors.
+export class AIUnavailable extends Error {}
+let down: { until: number; reason: string } | null = null;
+export const aiDown = () => (down && Date.now() < down.until ? down.reason : null);
+
+function reasonFor(status: number, text: string) {
+  if (status === 401) return "the AI key is invalid";
+  if (status === 402) return "the AI account is out of credit";
+  if (status === 403 && /limit/i.test(text)) return "the AI key hit its spending limit";
+  if (status === 403) return "the AI key was refused";
+  return "the AI provider is rate-limiting";
+}
+
+async function guarded<T>(fn: () => Promise<T>): Promise<T> {
+  const d = aiDown();
+  if (d) throw new AIUnavailable(d);
+  try {
+    return await fn();
+  } catch (e: any) {
+    const status = Number(e?.status);
+    if ([401, 402, 403, 429].includes(status)) {
+      const reason = reasonFor(status, `${e.message} ${e.body || ""}`);
+      down = { until: Date.now() + (status === 429 ? 2 : 10) * 60_000, reason };
+      throw new AIUnavailable(reason);
+    }
+    console.error("[llm]", e?.message || e);
+    throw new Error(`AI request failed${status ? ` (${status})` : ""}`);
+  }
+}
+
 // ---------------------------------------------------------------- public API
 export function structured<T>(opts: StructuredOpts): Promise<T> {
-  return config.provider === "openrouter" ? structuredOpenRouter<T>(opts) : structuredAnthropic<T>(opts);
+  return guarded(() => (config.provider === "openrouter" ? structuredOpenRouter<T>(opts) : structuredAnthropic<T>(opts)));
 }
 export function research(question: string): Promise<string> {
-  return config.provider === "openrouter" ? researchOpenRouter(question) : researchAnthropic(question);
+  return guarded(() => (config.provider === "openrouter" ? researchOpenRouter(question) : researchAnthropic(question)));
 }

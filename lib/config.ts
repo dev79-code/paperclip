@@ -16,11 +16,19 @@ export const config = {
   mode: (process.env.AGENT_MODE === "live" ? "live" : "demo") as "live" | "demo",
   adminPassword: process.env.ADMIN_PASSWORD || "change-me",
   approvalThresholdUsd: Number(process.env.APPROVAL_THRESHOLD_USD || 250),
-  tickMinutes: Number(process.env.TICK_MINUTES || 15),
+  /** a round starts every TICK_MIN_MINUTES–TICK_MAX_MINUTES (random, so it doesn't look robotic) */
+  tickMinMinutes: Number(process.env.TICK_MIN_MINUTES || 3),
+  tickMaxMinutes: Math.max(Number(process.env.TICK_MIN_MINUTES || 3), Number(process.env.TICK_MAX_MINUTES || 5)),
   publicUrl: process.env.PUBLIC_URL || "http://localhost:3000",
   /** the agent's own X account (without @) */
   xHandle: (process.env.X_HANDLE || "theagentclippy").replace(/^@/, ""),
   maxPostsPerTick: Number(process.env.MAX_POSTS_PER_TICK || 2),
+};
+
+/** Pick the gap before the next round, in ms. */
+export const nextRoundDelayMs = () => {
+  const lo = config.tickMinMinutes, hi = config.tickMaxMinutes;
+  return Math.round((lo + Math.random() * (hi - lo)) * 60_000);
 };
 
 export const useMockLLM = () =>

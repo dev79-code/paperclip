@@ -69,6 +69,8 @@ export interface Offer {
   photos: string[];
   /** public link to where the offer was made (the reply/comment), if any */
   sourceUrl?: string;
+  /** Solana address the counterparty sent us (taken from THEIR messages, never from the AI) */
+  payoutAddress?: string;
   createdAt: string;
   status: OfferStatus;
   evaluation?: Evaluation;
@@ -92,6 +94,27 @@ export interface Evaluation {
   replyText: string;
   policyFlags: string[];
   marketNotes?: string;
+  /** optional crypto sweetener (USD) Clippy adds to close this trade – capped by wallet policy */
+  sweetenerUsd?: number;
+}
+
+export type PayoutPurpose = "shipping" | "sweetener" | "tip" | "cost";
+export type PayoutStatus = "needs_address" | "queued" | "awaiting_approval" | "sending" | "sent" | "failed" | "rejected" | "simulated";
+export interface Payout {
+  id: string;
+  purpose: PayoutPurpose;
+  to: string; // Solana address
+  toLabel?: string; // handle or payee name
+  token: "USDC" | "SOL";
+  amount: number; // in token units
+  usd: number;
+  offerId?: string;
+  reason: string;
+  status: PayoutStatus;
+  why?: string; // why it needs approval / why it failed
+  signature?: string;
+  createdAt: string;
+  sentAt?: string;
 }
 
 export interface Trade {
@@ -160,4 +183,9 @@ export interface DB {
   watchlist: WatchItem[];
   history: { tick: number; at: string; value: number }[];
   lastTickAt?: string;
+  /** when the worker will start the next round (set at the end of each round) */
+  nextTickAt?: string;
+  payouts: Payout[];
+  walletPaused?: boolean;
+  walletBalance?: { sol: number; usdc: number; at: string };
 }

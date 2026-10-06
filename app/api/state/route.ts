@@ -1,7 +1,9 @@
+import type { DB } from "@/lib/types";
 import { isLocked, load } from "@/lib/db";
 import { submit } from "@/lib/store";
 import { config } from "@/lib/config";
 import { tick } from "@/lib/agent/loop";
+import { publicTreasury } from "@/lib/wallet/payouts";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
@@ -26,6 +28,23 @@ async function autoplay() {
   await running;
 }
 
+// Error lines are for the operator: strip URLs / raw API bodies and collapse repeats before showing them publicly.
+function cleanError(t: string) {
+  if (/openrouter|anthropic|\b(401|402|403|429)\b|key limit/i.test(t) && !/brain is offline/.test(t))
+    return t.replace(/\s*(failed)?:.*$/is, "").trim() + " – the AI was unavailable, will retry.";
+  return t.replace(/https?:\/\/\S+/g, "").replace(/\{[\s\S]*$/, "…").slice(0, 220);
+}
+function publicLog(log: DB["log"]) {
+  const out: DB["log"] = [];
+  for (const l of log.slice(-300)) {
+    const e = l.kind === "error" ? { ...l, text: cleanError(l.text) } : l;
+    const prev = out.at(-1);
+    if (e.kind === "error" && prev?.kind === "error" && /AI was unavailable|brain is offline/.test(prev.text) && /AI was unavailable|brain is offline/.test(e.text)) continue;
+    out.push(e);
+  }
+  return out.slice(-120);
+}
+
 // Public read-only state (simulator ground truth and contact details stripped).
 export async function GET() {
   try {
@@ -48,18 +67,25 @@ export async function GET() {
       from: o.channel === "web" || o.channel === "email" ? "private" : o.from,
       postUrl: db.posts.find((p) => p.id === o.postId)?.url,
     })),
-    log: db.log.slice(-120),
+    log: publicLog(db.log),
     activity: db.activity.slice(-80),
     watchlist: db.watchlist,
     history: db.history.slice(-400),
     postsCount: db.posts.length,
     xHandle: config.xHandle,
+    treasury: publicTreasury(db),
     // Real posts & public replies on X (embedded on the site). Demo posts have no real id → shown as previews.
     xFeed: [
       ...db.posts.filter((p) => p.channel === "x" && /^\d{6,}$/.test(p.externalId || "")).map((p) => ({ kind: "post", id: p.externalId!, at: p.createdAt, url: p.url, text: p.title })),
       ...db.offers.filter((o) => o.channel === "x" && o.sourceUrl && /^\d{6,}$/.test(o.threadRef || "")).map((o) => ({ kind: "reply", id: o.threadRef!, at: o.createdAt, url: o.sourceUrl, text: o.itemName, from: o.from })),
     ].sort((a, b) => Date.parse(b.at) - Date.parse(a.at)).slice(0, 6),
     xPreview: db.posts.filter((p) => p.channel === "x").slice(-3).reverse().map((p) => ({ at: p.createdAt, text: p.title })),
-    roundIntervalSec: config.mode === "demo" && process.env.DEMO_AUTOPLAY !== "0" ? TICK_S : config.tickMinutes * 60,
+    ...(() => {
+      const auto = config.mode === "demo" && process.env.DEMO_AUTOPLAY !== "0";
+      const last = Date.parse(db.lastTickAt || "") || Date.now();
+      const next = auto ? new Date(last + TICK_S * 1000).toISOString() : db.nextTickAt;
+      const gap = next ? Math.max(1, (Date.parse(next) - last) / 1000) : config.tickMaxMinutes * 60;
+      return { nextTickAt: next, roundIntervalSec: Math.round(gap), roundRange: auto ? null : [config.tickMinMinutes, config.tickMaxMinutes] };
+    })(),
   });
 }

@@ -1,5 +1,6 @@
 // DEMO channel: simulates a community replying to the agent's trade requests so the whole loop can
 // be watched end-to-end with no accounts or API keys. Nothing leaves the machine.
+import { Keypair } from "@solana/web3.js";
 import { CATALOG, HANDLES, type CatalogItem } from "../demo/catalog";
 import type { Channel, Incoming } from "./types";
 import type { DB, Venue } from "../../types";
@@ -53,7 +54,7 @@ export const demoChannel: Channel = {
           venueId: venue.id,
           postId: p.id,
           from: pick(HANDLES),
-          text: pick(PHRASES)(c),
+          text: pick(PHRASES)(c) + (Math.random() < 0.6 ? ` My SOL: ${Keypair.generate().publicKey.toBase58()}` : ""),
           threadRef: "demo_thread_" + Math.random().toString(36).slice(2, 9),
           photos: [],
           demo: { ...c, value: +(c.value * noise).toFixed(2) },

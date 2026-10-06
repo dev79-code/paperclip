@@ -24,6 +24,7 @@ export function load(): DB {
   db.activity ??= [];
   db.watchlist ??= [];
   db.history ??= [];
+  db.payouts ??= [];
   return db;
 }
 

@@ -4,11 +4,16 @@
 import { log, resetInPlace, uid } from "./db";
 import type { DB } from "./types";
 import { acceptOffer, completeTrade } from "./agent/loop";
+import { approve as approvePayout, propose } from "./wallet/payouts";
+import { isValidRecipient } from "./wallet/solana";
 
 export type Action =
   | { type: "admin"; action: "approve" | "reject" | "received"; offerId: string }
   | { type: "admin"; action: "permission"; venueId: string; permission: "granted" | "pending" | "not_required" | "denied" }
   | { type: "admin"; action: "item_image"; url: string }
+  | { type: "wallet"; action: "approve" | "reject"; payoutId: string }
+  | { type: "wallet"; action: "pause" | "resume" }
+  | { type: "wallet"; action: "manual"; purpose: "tip" | "cost"; to: string; usd: number; label?: string; reason: string }
   | { type: "web_offer"; itemName: string; itemDescription: string; photoUrl?: string; contact: string }
   | { type: "email"; from: string; subject?: string; text: string; messageId?: string }
   | { type: "reset" };
@@ -54,6 +59,33 @@ export async function applyAction(db: DB, a: Action): Promise<string> {
       });
       log(db, "offer", `Email reply from ${a.from}`, id);
       return "ok";
+    }
+
+    case "wallet": {
+      if (a.action === "pause" || a.action === "resume") {
+        db.walletPaused = a.action === "pause";
+        log(db, "system", db.walletPaused ? "Wallet payments paused by a human." : "Wallet payments resumed.");
+        return "ok";
+      }
+      if (a.action === "approve") return approvePayout(db, a.payoutId);
+      if (a.action === "reject") {
+        const p = db.payouts.find((x) => x.id === a.payoutId);
+        if (!p) return "no such payment";
+        if (["sent", "sending", "simulated"].includes(p.status)) return `payment is already ${p.status}`;
+        p.status = "rejected";
+        p.why = "vetoed by a human";
+        log(db, "system", `Human vetoed payment of $${p.usd} to ${p.toLabel || p.to}.`, p.id);
+        return "ok";
+      }
+      if (a.action === "manual") {
+        if (!isValidRecipient(a.to)) return "not a valid Solana address";
+        if (!(a.usd > 0 && a.usd <= 10_000)) return "amount must be between $0 and $10,000";
+        const p = propose(db, { purpose: a.purpose, usd: a.usd, to: a.to, toLabel: a.label || "manual", reason: a.reason || `Manual ${a.purpose}` });
+        if (!p) return "wallet is switched off (WALLET_ENABLED=1)";
+        p.status = "awaiting_approval"; // a human created it, so send it right away below
+        return approvePayout(db, p.id);
+      }
+      return "unknown wallet action";
     }
 
     case "admin": {

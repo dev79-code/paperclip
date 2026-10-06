@@ -1,4 +1,4 @@
-# Paperclip: setup guide
+# Clippy.fun: setup guide
 
 Work through these stages in order. Each one works on its own, so you can stop at any stage.
 

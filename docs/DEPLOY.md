@@ -89,7 +89,8 @@ DEMO_AUTOPLAY=0
 PUBLIC_URL=https://paperclip.vercel.app        # your Vercel URL (update after step 10)
 ADMIN_PASSWORD=<long random string>
 APPROVAL_THRESHOLD_USD=50
-TICK_MINUTES=15
+TICK_MIN_MINUTES=3
+TICK_MAX_MINUTES=5
 X_HANDLE=theagentclippy
 X_CLIENT_ID=...
 X_CLIENT_SECRET=...
@@ -133,7 +134,15 @@ The token is saved to `~/paperclip/data/x-token.json` on the VPS and refreshes i
 4. Optional: Settings → Domains → add `yourdomain.com`.
 5. Put the final site URL in the VPS `.env` as `PUBLIC_URL` (it's the link in every post), then run `pm2 restart all --update-env`.
 
-## 11. Go live
+## 11. Preflight
+
+```bash
+npm run preflight
+```
+
+It checks the AI key and model, the X login and DM access, which venues will be used, the wallet, and that the public site reaches the backend. It makes one tiny AI call and nothing else: no posts, no DMs, no payments. Fix every ✗ before going live.
+
+## 12. Go live
 ```bash
 cd ~/paperclip
 sed -i 's/^AGENT_MODE=.*/AGENT_MODE=live/' .env
@@ -141,6 +150,28 @@ pm2 restart all --update-env
 pm2 logs paperclip-agent
 ```
 The first live round posts on X. Approve deals at `https://<your site>/admin`, using `ADMIN_PASSWORD`.
+
+## Clippy's wallet (optional)
+
+Clippy can pay shipping refunds, small trade sweeteners and thank-you tips, plus approved running costs, from its own Solana wallet. The code enforces the limits, and anything bigger waits for you in `/admin`.
+
+Test on devnet first:
+
+```bash
+cd ~/paperclip
+npm run wallet -- create      # makes data/wallet.json (keep a backup somewhere safe and offline)
+npm run wallet -- airdrop     # free devnet SOL for fees
+npm run wallet -- info        # address + balances
+```
+
+Get devnet USDC from https://faucet.circle.com (pick Solana Devnet and paste the address). Then in `.env`:
+
+```
+WALLET_ENABLED=1
+WALLET_NETWORK=devnet
+```
+
+Run `pm2 restart all --update-env`. In live mode Clippy asks people for their Solana address after a deal and pays once the item arrives. To switch to real money, set `WALLET_NETWORK=mainnet`, run `create` again with the devnet `data/wallet.json` moved aside first, and fund it with only a small float (for example $50 USDC + 0.1 SOL). Use "Pause all payments" in `/admin` at any time.
 
 ## Everyday commands
 ```bash

@@ -1,4 +1,4 @@
-# Paperclip
+# Clippy.fun
 
 **An AI agent that starts with one red paperclip and trades its way up to $100,000, in public.**
 
@@ -54,7 +54,7 @@ Add `OPENROUTER_API_KEY` to `.env` and the agent writes posts and values offers 
 |---|---|
 | `npm run dev` | Dev server with hot reload |
 | `npm run build && npm start` | Production web server (API + dashboard) |
-| `npm run agent` | Agent worker: one round every `TICK_MINUTES` |
+| `npm run agent` | Agent worker: a round every 3–5 min (`TICK_MIN_MINUTES`–`TICK_MAX_MINUTES`) |
 | `npm run agent -- --ticks 40 --fast` | Fast-forward 40 rounds (demo) |
 | `npm run reset` | Back to one red paperclip |
 | `npm run x:login` | One-time X login for the agent's account |

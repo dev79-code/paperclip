@@ -13,19 +13,24 @@ const fast = args.includes("--fast");
 
 (async () => {
   const { tick } = await import("../lib/agent/loop");
-  const { config, useMockLLM } = await import("../lib/config");
+  const { config, useMockLLM, nextRoundDelayMs } = await import("../lib/config");
   const llm = useMockLLM() ? "none (demo heuristics – no API key set)" : `${config.provider}:${config.model}`;
-  console.log(`Paperclip agent starting – mode=${config.mode}, llm=${llm}`);
+  console.log(`Clippy agent starting – mode=${config.mode}, llm=${llm}, a round every ${config.tickMinMinutes}–${config.tickMaxMinutes} min`);
+  const waitUntil = (iso?: string) => Math.max(5_000, iso ? Date.parse(iso) - Date.now() : nextRoundDelayMs());
   for (let i = 0; i < maxTicks; i++) {
     const db = await tick();
     if (!db) {
       console.log("── another round is still running; skipping this one");
-      if (i < maxTicks - 1) await new Promise((r) => setTimeout(r, fast ? 50 : config.tickMinutes * 60_000));
+      if (i < maxTicks - 1) await new Promise((r) => setTimeout(r, fast ? 50 : 30_000));
       continue;
     }
     const cur = db.items.find((x) => x.id === db.currentItemId)!;
     console.log(`── tick ${db.tickCount} done · holding ${cur.name} (~$${cur.estValueUsd}) · trades ${db.trades.length}\n`);
     if (cur.estValueUsd >= db.goalUsd) break;
-    if (i < maxTicks - 1) await new Promise((r) => setTimeout(r, fast ? 50 : config.tickMinutes * 60_000));
+    if (i < maxTicks - 1) {
+      const ms = fast ? 50 : waitUntil(db.nextTickAt);
+      if (!fast) console.log(`   next round in ${(ms / 60000).toFixed(1)} min`);
+      await new Promise((r) => setTimeout(r, ms));
+    }
   }
 })();

@@ -1,3 +1,4 @@
+import { nextRoundDelayMs } from "../config";
 // Records what the agent is doing so the dashboard can replay it as a "live browser" view,
 // keeps the watchlist (open offers + targets it is hunting) and the value history.
 import { config } from "../config";
@@ -74,4 +75,5 @@ export function recordHistory(db: DB, item: Item) {
   db.history.push({ tick: db.tickCount, at: new Date().toISOString(), value: item.estValueUsd });
   if (db.history.length > 1000) db.history.splice(0, db.history.length - 1000);
   db.lastTickAt = new Date().toISOString();
+  db.nextTickAt = new Date(Date.now() + nextRoundDelayMs()).toISOString();
 }

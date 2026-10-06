@@ -151,6 +151,7 @@ export async function evaluateOffer(db: DB, item: Item, offer: Offer, demo?: Inc
       reasoning,
       replyText,
       policyFlags: flags,
+      sweetenerUsd: decision === "accept" && d.story >= 0.8 ? 5 : 0,
     };
   }
 
@@ -171,6 +172,7 @@ export async function evaluateOffer(db: DB, item: Item, offer: Offer, demo?: Inc
         decision: { type: "string", enum: ["accept", "counter", "reject"] },
         reasoning: { type: "string", description: "2-3 sentences for the public log" },
         replyText: { type: "string", description: "reply to send the person. Friendly. If countering, say exactly what would make it work. If accepting, say a human will arrange shipping." },
+        sweetenerUsd: { type: "number", description: "0 normally. Only if a SMALL crypto sweetener paid by you would close a clearly great trade, the USD amount (hard-capped by the wallet rules). Mention it in replyText if > 0." },
         extraFlags: { type: "array", items: { type: "string" }, description: "concerns e.g. 'no photos', 'stolen?', 'needs authentication'" },
       },
       required: ["estValueUsd", "valueLow", "valueHigh", "category", "liquidity", "risk", "story", "decision", "reasoning", "replyText", "extraFlags"],
@@ -187,7 +189,7 @@ Conversation so far:\n${offer.messages.map((m) => `${m.role}: ${m.text}`).join("
 Market data:\n${market}
 
 Pre-screen flags: ${flags.join(", ") || "none"}
-Rules: barter only; aim for >=1.5x; reject if risk is high; ask for timestamped photos if none for items > $50.`,
+Rules: barter only (you never accept cash/crypto FROM people, but may offer a small USDC sweetener yourself when it closes a great trade); aim for >=1.5x; reject if risk is high; ask for timestamped photos if none for items > $50.`,
   });
   const base = { estValueUsd: r.estValueUsd, liquidity: r.liquidity, risk: r.risk, story: r.story };
   return {

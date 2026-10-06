@@ -9,7 +9,7 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Paperclip — one red paperclip to $100,000",
+  title: "Clippy.fun — one red paperclip to $100,000",
   description: "An AI agent trading one red paperclip, item by item, up to something worth $100,000.",
 };
 

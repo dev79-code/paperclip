@@ -4,9 +4,12 @@ import { currentItem, log, uid } from "../db";
 import { withDb } from "../store";
 import type { DB, Evaluation, Item, Offer, Venue } from "../types";
 import { evaluateOffer, parseIncoming, think, writePost } from "./brain";
+import { AIUnavailable, aiDown } from "./llm";
 import { channelFor, venueAllowed } from "./channels";
 import { enforce, needsApproval } from "./policy";
 import { act, compsUrl, recordHistory, siteOf, updateWatchlist, urlFor } from "./telemetry";
+import { findAddress } from "../wallet/solana";
+import { attachAddress, limits as walletLimits, onTradeCompleted, processPayouts } from "../wallet/payouts";
 
 const H = 3600_000;
 const fmt = (n: number) => (n < 1 ? `$${n.toFixed(2)}` : `$${Math.round(n).toLocaleString("en-US")}`);
@@ -21,6 +24,13 @@ export async function tick(): Promise<DB | null> {
     if (currentItem(db).estValueUsd >= db.goalUsd) return db; // goal reached – resting
 
     const item = currentItem(db);
+    // AI key dead (out of credit / over limit)? Don't hammer it – say so once, keep the site alive, retry later.
+    if (aiDown()) {
+      offline(db, aiDown()!);
+      await processPayouts(db);
+      recordHistory(db, item);
+      return db;
+    }
     // One deal at a time: while a trade is pending (approval / shipping) don't solicit new offers.
     const dealPending = db.offers.some((o) => o.status === "awaiting_approval" || o.status === "accepted");
     const chosen = dealPending ? [] : chooseVenues(db, item);
@@ -29,7 +39,15 @@ export async function tick(): Promise<DB | null> {
     if (dealPending) {
       log(db, "think", `A deal is in progress, so I'm not asking for new offers until it lands.`);
     } else {
-      const t = await safe(() => think(db, item, chosen, wantTargets), { thought: "(thinking failed)", targets: null });
+      const t = await safe(() => think(db, item, chosen, wantTargets), { thought: "", targets: null });
+      if (!t.thought) {
+        if (aiDown()) {
+          offline(db, aiDown()!);
+          recordHistory(db, item);
+          return db;
+        }
+        t.thought = "Couldn't think this round – I'll try again next round.";
+      }
       targets = t.targets;
       log(db, "think", t.thought);
       act(db, { site: "agent", url: "paperclip://mind", action: "think", title: "Planning this round", detail: t.thought,
@@ -40,6 +58,7 @@ export async function tick(): Promise<DB | null> {
     await listen(db, item);
     await evaluateNew(db, item);
     await decide(db, currentItem(db));
+    await processPayouts(db); // pay what's due, within the wallet's hard limits
     updateWatchlist(db, currentItem(db), targets);
     recordHistory(db, currentItem(db));
     return db;
@@ -97,11 +116,22 @@ async function listen(db: DB, item: Item) {
           detail: incoming.length ? `${incoming.length} new repl${incoming.length === 1 ? "y" : "ies"}` : "No new replies yet",
           rows: incoming.slice(0, 5).map((m) => ({ label: m.from, value: m.text.slice(0, 90) })) });
       for (const msg of incoming) {
+        // A Solana address in someone's message → remember it for their most recent deal (payouts go there).
+        const addr = findAddress(msg.text);
+        if (addr) {
+          const theirs = [...db.offers].reverse().find((o) => o.from === msg.from && o.channel === msg.channel && !["rejected", "expired"].includes(o.status));
+          if (theirs && theirs.payoutAddress !== addr) {
+            theirs.payoutAddress = addr;
+            log(db, "system", `${msg.from} sent a Solana address for “${theirs.itemName}”.`, theirs.id);
+          }
+          attachAddress(db, msg.from, addr);
+        }
         const existing = db.offers.find((o) => o.threadRef === msg.threadRef && o.from === msg.from && OPEN.includes(o.status));
         if (existing) {
           existing.messages.push({ role: "them", text: msg.text, at: now() });
           existing.photos.push(...msg.photos);
-          existing.status = "new"; // re-evaluate with the new info
+          // re-value only offers still under discussion – never re-open an approved/accepted deal
+          if (["new", "evaluated", "countered"].includes(existing.status)) existing.status = "new";
           continue;
         }
         const parsed = await parseIncoming(msg, item);
@@ -118,6 +148,7 @@ async function listen(db: DB, item: Item) {
           itemDescription: parsed.itemDescription,
           photos: msg.photos,
           sourceUrl: msg.url,
+          payoutAddress: addr,
           createdAt: now(),
           status: "new",
           messages: [{ role: "them", text: msg.text, at: now() }],
@@ -162,7 +193,11 @@ async function evaluateNew(db: DB, item: Item) {
         o.status = "evaluated"; // accept-worthy; decide() picks the best one
       }
     } catch (e: any) {
-      log(db, "error", `Evaluating ${o.itemName} failed: ${e.message}`, o.id);
+      if (e instanceof AIUnavailable) {
+        offline(db, e.message);
+        break; // the rest wait for the next round
+      }
+      log(db, "error", `Couldn't value ${o.itemName} this round (${e.message}) – will retry.`, o.id);
     }
   }
 }
@@ -186,7 +221,12 @@ async function decide(db: DB, item: Item) {
 export async function acceptOffer(db: DB, o: Offer) {
   o.status = "accepted";
   o.updatedTick = db.tickCount;
-  await say(db, o, o.evaluation?.replyText || "Deal! A human will be in touch about shipping.");
+  let text = o.evaluation?.replyText || "Deal! A human will be in touch about shipping.";
+  if (walletLimits().enabled && !o.payoutAddress && o.channel !== "web" && o.channel !== "email") {
+    const sw = o.evaluation?.sweetenerUsd ? ` plus $${Math.floor(o.evaluation.sweetenerUsd)}` : "";
+    text += ` Send me your Solana address and I'll cover your shipping${sw} in USDC once the item arrives.`;
+  }
+  await say(db, o, text);
   log(db, "think", `Accepted ${o.from}'s ${o.itemName}. Waiting for the item to arrive and be checked.`, o.id);
 }
 
@@ -220,6 +260,7 @@ export function completeTrade(db: DB, o: Offer) {
   for (const other of db.offers)
     if (other.id !== o.id && OPEN.includes(other.status)) other.status = other.sim ? "expired" : "new";
   log(db, "trade", `TRADE #${number}: ${from.name} → ${item.name} (~${fmt(item.estValueUsd)}, ${multiplier}x) with ${o.from}`, item.id);
+  onTradeCompleted(db, o, item.estValueUsd); // shipping refund, agreed sweetener, thank-you tip
   if (item.estValueUsd >= db.goalUsd) log(db, "system", `Goal reached in ${number} trades: ${item.name} (~${fmt(item.estValueUsd)}).`);
 }
 
@@ -259,6 +300,13 @@ async function say(db: DB, o: Offer, text: string) {
   } catch (e: any) {
     log(db, "error", `Reply to ${o.from} failed: ${e.message}`, o.id);
   }
+}
+
+/** One friendly line in the public log while the AI is unavailable (not one per round). */
+function offline(db: DB, reason: string) {
+  const text = `My AI brain is offline (${reason}). Offers are safe and will be answered as soon as it's back.`;
+  const last = [...db.log].reverse().find((l) => l.kind === "error" || l.kind === "think");
+  if (last?.text !== text) log(db, "error", text);
 }
 
 async function safe<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
