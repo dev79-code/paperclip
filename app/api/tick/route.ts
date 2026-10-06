@@ -3,11 +3,12 @@ import { tick } from "@/lib/agent/loop";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
-// Trigger one agent round. Point a cron (Vercel Cron, GitHub Actions, etc.) at this with ?key=ADMIN_PASSWORD,
-// or run the long-lived worker instead: `npm run agent`.
+// Trigger one agent round (used by the "Run one round now" button). The long-running worker
+// (`npm run agent`) normally does this every TICK_MINUTES.
 export async function POST(req: Request) {
   if (!isAdmin(req)) return deny();
   const db = await tick();
+  if (!db) return Response.json({ ok: false, result: "a round is already running" }, { status: 409 });
   return Response.json({ ok: true, tick: db.tickCount, trades: db.trades.length });
 }
 export const GET = POST;

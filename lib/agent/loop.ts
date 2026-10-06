@@ -1,6 +1,7 @@
 // The agent loop: OUTREACH → LISTEN → EVALUATE → NEGOTIATE → (APPROVE) → TRADE → LEARN.
 import { config } from "../config";
-import { currentItem, log, mutate, uid } from "../db";
+import { currentItem, log, uid } from "../db";
+import { withDb } from "../store";
 import type { DB, Evaluation, Item, Offer, Venue } from "../types";
 import { evaluateOffer, parseIncoming, think, writePost } from "./brain";
 import { channelFor, venueAllowed } from "./channels";
@@ -12,8 +13,9 @@ const fmt = (n: number) => (n < 1 ? `$${n.toFixed(2)}` : `$${Math.round(n).toLoc
 const now = () => new Date().toISOString();
 const OPEN: Offer["status"][] = ["new", "evaluated", "countered", "awaiting_approval", "accepted"];
 
-export async function tick() {
-  return mutate(async (db) => {
+/** Run one agent round. Returns the saved database, or null if another round is already running. */
+export async function tick(): Promise<DB | null> {
+  const r = await withDb(async (db) => {
     db.tickCount++;
     if (config.mode === "demo") simulateCounterparties(db);
     if (currentItem(db).estValueUsd >= db.goalUsd) return db; // goal reached – resting
@@ -42,6 +44,7 @@ export async function tick() {
     recordHistory(db, currentItem(db));
     return db;
   });
+  return r ? r.db : null;
 }
 
 // ---------------------------------------------------------------- 1. pick where to post

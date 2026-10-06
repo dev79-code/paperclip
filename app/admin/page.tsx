@@ -8,6 +8,7 @@ export default function Admin() {
   const [key, setKey] = useState("");
   const [db, setDb] = useState<DB | null>(null);
   const [err, setErr] = useState("");
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -28,13 +29,16 @@ export default function Admin() {
   async function act(body: Record<string, string>) {
     setBusy(true);
     const r = await fetch("/api/admin", { method: "POST", headers: { "x-admin-key": key, "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    if (!r.ok) setErr((await r.json()).result || "failed");
+    const j = await r.json().catch(() => ({}));
+    setErr(r.ok ? "" : j.result || "failed");
+    setNote(r.status === 202 ? "Queued: an agent round is running and will apply this before it saves (usually within a minute)." : "");
     await refresh();
     setBusy(false);
   }
   async function runTick() {
     setBusy(true);
-    await fetch("/api/tick", { method: "POST", headers: { "x-admin-key": key } });
+    const r = await fetch("/api/tick", { method: "POST", headers: { "x-admin-key": key } });
+    setNote(r.status === 409 ? "A round is already running." : "");
     await refresh();
     setBusy(false);
   }
@@ -64,6 +68,10 @@ export default function Admin() {
         </div>
       </header>
       {err && <p style={{ color: "var(--bad)" }}>{err}</p>}
+      {note && <p style={{ color: "var(--warn)" }}>{note}</p>}
+      {db && ((db as any).roundRunning || (db as any).pendingActions > 0) && (
+        <p className="small muted">{(db as any).roundRunning ? "An agent round is running. " : ""}{(db as any).pendingActions > 0 ? `${(db as any).pendingActions} change(s) queued.` : ""}</p>
+      )}
       <p className="muted">Holding <b>{cur.name}</b> (~{fmt(cur.estValueUsd)}) · round {db.tickCount} · {db.trades.length} trades</p>
 
       <Section title="Needs your approval" empty="Nothing waiting.">

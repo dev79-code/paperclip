@@ -13,10 +13,16 @@ const fast = args.includes("--fast");
 
 (async () => {
   const { tick } = await import("../lib/agent/loop");
-  const { config } = await import("../lib/config");
-  console.log(`Paperclip agent starting – mode=${config.mode}, llm=${config.anthropicKey ? config.model : "mock"}`);
+  const { config, useMockLLM } = await import("../lib/config");
+  const llm = useMockLLM() ? "none (demo heuristics – no API key set)" : `${config.provider}:${config.model}`;
+  console.log(`Paperclip agent starting – mode=${config.mode}, llm=${llm}`);
   for (let i = 0; i < maxTicks; i++) {
     const db = await tick();
+    if (!db) {
+      console.log("── another round is still running; skipping this one");
+      if (i < maxTicks - 1) await new Promise((r) => setTimeout(r, fast ? 50 : config.tickMinutes * 60_000));
+      continue;
+    }
     const cur = db.items.find((x) => x.id === db.currentItemId)!;
     console.log(`── tick ${db.tickCount} done · holding ${cur.name} (~$${cur.estValueUsd}) · trades ${db.trades.length}\n`);
     if (cur.estValueUsd >= db.goalUsd) break;

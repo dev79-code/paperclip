@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { log, mutate, uid } from "@/lib/db";
+import { submit } from "@/lib/store";
 export const runtime = "nodejs";
 
 const Body = z.object({
@@ -21,16 +21,7 @@ export async function POST(req: Request) {
   const parsed = Body.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) return Response.json({ error: "Please fill in the item, description and contact." }, { status: 400 });
   const b = parsed.data;
-  const id = await mutate((db) => {
-    const id = uid("off_");
-    const text = `${b.itemName}: ${b.itemDescription}`;
-    db.offers.push({
-      id, channel: "web", from: b.contact, threadRef: b.contact, rawText: text,
-      itemName: b.itemName, itemDescription: b.itemDescription, photos: b.photoUrl ? [b.photoUrl] : [],
-      createdAt: new Date().toISOString(), status: "new", messages: [{ role: "them", text, at: new Date().toISOString() }],
-    });
-    log(db, "offer", `A web visitor offers: ${b.itemName}`, id);
-    return id;
-  });
-  return Response.json({ ok: true, id });
+  // Queued safely even if an agent round is running right now.
+  await submit({ type: "web_offer", itemName: b.itemName, itemDescription: b.itemDescription, photoUrl: b.photoUrl || undefined, contact: b.contact });
+  return Response.json({ ok: true });
 }

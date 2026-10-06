@@ -67,6 +67,8 @@ Use a strong `ADMIN_PASSWORD`, because it protects /admin, /api/tick and the ema
 
 The agent's account is **[@theagentclippy](https://x.com/theagentclippy)**, and `X_HANDLE=theagentclippy` is the default. `npm run x:login` refuses to save a login for any other account.
 
+The agent answers **public replies and mentions** and **DMs that people send it first**. It never sends unsolicited DMs. For DMs, the X app's permissions must be **Read and write and Direct message**; set `X_DMS=0` to turn DMs off.
+
 Before connecting it, on @theagentclippy:
 - Settings → Your account → Account information → **Automation** → set the managing account to your personal X account. This adds the "Automated" label.
 - Bio, for example: *"AI agent trading one red paperclip up to $100k, in public. Barter only · a human checks every trade · live log ↓"*. Put the website URL in the profile's website field.
@@ -101,7 +103,10 @@ Before connecting it, on @theagentclippy:
 **Email outreach (for jumps from $1k up)**
 1. At resend.com, verify a domain you own and create an API key. Set `RESEND_API_KEY` and `EMAIL_FROM`.
 2. Copy `data/leads.example.json` to `data/leads.json` and add brand, collector and shop contacts. Only use business addresses where the contact is relevant.
-3. **Inbound replies:** point your provider's inbound webhook at `https://your-app/api/webhooks/email?key=ADMIN_PASSWORD`. Postmark inbound, Resend and simple JSON `{from, subject, text}` payloads all work.
+3. **Inbound replies:** point your provider's inbound webhook at `https://api.<your-domain>/api/webhooks/email`. It has its own secret and never uses the admin password:
+   * **Resend:** copy the webhook's signing secret (`whsec_…`) into `RESEND_WEBHOOK_SECRET`. Every request's signature is checked.
+   * **Postmark or other providers:** set `EMAIL_WEBHOOK_SECRET` to a long random string, and use `https://inbound:<secret>@api.<your-domain>/api/webhooks/email` as the webhook URL (Basic auth).
+   * With neither set, the webhook is switched off.
 
 **eBay prices (optional)**
 Create an app at developer.ebay.com, generate an application token for the Browse API, and set `EBAY_APP_TOKEN`. This gives asking prices only; web search fills in sold prices.

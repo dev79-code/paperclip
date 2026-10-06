@@ -152,4 +152,4 @@ cp data/db.json ~/db-$(date +%F).json   # quick backup (or enable DigitalOcean d
 
 ## Adding Reddit, forums or email later
 Add the keys to the VPS `.env` (see SETUP.md), run `pm2 restart all --update-env`, then mark each approved community **granted** in `/admin`.
-For inbound email, point the webhook at `https://api.yourdomain.com/api/webhooks/email?key=ADMIN_PASSWORD`.
+For inbound email, point the webhook at `https://api.yourdomain.com/api/webhooks/email`, protected by its own secret (`RESEND_WEBHOOK_SECRET` or `EMAIL_WEBHOOK_SECRET`, see `.env.example`). Never put `ADMIN_PASSWORD` in a webhook URL.

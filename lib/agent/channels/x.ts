@@ -33,6 +33,9 @@ export const xChannel: Channel = {
   },
 
   async fetchReplies(db, venue) {
+    const out: Incoming[] = [];
+
+    // 1) Public mentions and replies to our posts
     const since = db.cursors["x_mentions"];
     const q = new URLSearchParams({
       max_results: "50",
@@ -45,21 +48,69 @@ export const xChannel: Channel = {
     const j = await x(`/users/${userId()}/mentions?${q}`);
     const users = new Map<string, string>((j.includes?.users || []).map((u: any) => [u.id, u.username]));
     const media = new Map<string, string>((j.includes?.media || []).map((m: any) => [m.media_key, m.url]));
-    const out: Incoming[] = (j.data || []).map((t: any) => ({
-      channel: "x",
-      venueId: venue.id,
-      from: "@" + (users.get(t.author_id) || t.author_id),
-      text: t.text,
-      threadRef: t.id,
-      photos: (t.attachments?.media_keys || []).map((k: string) => media.get(k)).filter(Boolean),
-      postId: undefined,
-    }));
+    for (const t of j.data || []) {
+      out.push({
+        channel: "x",
+        venueId: venue.id,
+        from: "@" + (users.get(t.author_id) || t.author_id),
+        text: t.text,
+        threadRef: t.id,
+        photos: (t.attachments?.media_keys || []).map((k: string) => media.get(k)).filter(Boolean),
+      });
+    }
     if (j.meta?.newest_id) db.cursors["x_mentions"] = j.meta.newest_id;
+
+    // 2) Direct messages (only answers people who DM first – never cold-DMs anyone)
+    if (dmsEnabled()) {
+      try {
+        out.push(...(await fetchDMs(db, venue.id)));
+      } catch (e: any) {
+        console.error("X DMs:", e.message);
+      }
+    }
     return out;
   },
 
   async reply(threadRef, text) {
+    if (threadRef.startsWith("dm:")) {
+      // DM conversation: threadRef = "dm:<sender user id>"
+      await x(`/dm_conversations/with/${threadRef.slice(3)}/messages`, { method: "POST", body: JSON.stringify({ text: text.slice(0, 9000) }) });
+      return;
+    }
     if (text.length > 280) text = text.slice(0, 277) + "…";
     await x("/tweets", { method: "POST", body: JSON.stringify({ text, reply: { in_reply_to_tweet_id: threadRef } }) });
   },
 };
+
+export const dmsEnabled = () => process.env.X_DMS !== "0";
+
+async function fetchDMs(db: import("../../types").DB, venueId: string): Promise<Incoming[]> {
+  const q = new URLSearchParams({
+    event_types: "MessageCreate",
+    max_results: "50",
+    "dm_event.fields": "id,text,sender_id,created_at,attachments",
+    expansions: "sender_id,attachments.media_keys",
+    "user.fields": "username",
+    "media.fields": "url",
+  });
+  const j = await x(`/dm_events?${q}`);
+  const events: any[] = j.data || [];
+  const users = new Map<string, string>((j.includes?.users || []).map((u: any) => [u.id, u.username]));
+  const media = new Map<string, string>((j.includes?.media || []).map((m: any) => [m.media_key, m.url]));
+  const last = db.cursors["x_dm_last"];
+  const newest = events.reduce((m, e) => (BigInt(e.id) > BigInt(m) ? e.id : m), last || "0");
+  db.cursors["x_dm_last"] = newest;
+  // First run: just remember where we are – don't answer old DM history.
+  if (!last) return [];
+  return events
+    .filter((e) => BigInt(e.id) > BigInt(last) && e.sender_id !== userId())
+    .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1))
+    .map((e) => ({
+      channel: "x" as const,
+      venueId,
+      from: "@" + (users.get(e.sender_id) || e.sender_id),
+      text: e.text,
+      threadRef: "dm:" + e.sender_id,
+      photos: (e.attachments?.media_keys || []).map((k: string) => media.get(k)).filter(Boolean),
+    }));
+}

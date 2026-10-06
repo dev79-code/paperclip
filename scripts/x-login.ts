@@ -16,7 +16,7 @@ const state = crypto.randomBytes(8).toString("hex");
   if (!process.env.X_CLIENT_ID) throw new Error("Set X_CLIENT_ID in .env first");
   const url = "https://x.com/i/oauth2/authorize?" + new URLSearchParams({
     response_type: "code", client_id: process.env.X_CLIENT_ID, redirect_uri: REDIRECT,
-    scope: "tweet.read tweet.write users.read offline.access", state, code_challenge: challenge, code_challenge_method: "S256",
+    scope: process.env.X_DMS === "0" ? "tweet.read tweet.write users.read offline.access" : "tweet.read tweet.write users.read dm.read dm.write offline.access", state, code_challenge: challenge, code_challenge_method: "S256",
   });
   console.log(`\n1) Log into X as @${(process.env.X_HANDLE || "theagentclippy").replace(/^@/, "")} in your browser.`);
   console.log("\n2) Open this URL and click Authorize:\n\n" + url + "\n");

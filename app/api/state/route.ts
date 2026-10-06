@@ -1,4 +1,5 @@
-import { load, resetDb } from "@/lib/db";
+import { isLocked, load } from "@/lib/db";
+import { submit } from "@/lib/store";
 import { config } from "@/lib/config";
 import { tick } from "@/lib/agent/loop";
 export const dynamic = "force-dynamic";
@@ -11,13 +12,13 @@ const RESTART_S = Number(process.env.DEMO_RESTART_SECONDS || 60);
 let running: Promise<unknown> | null = null;
 
 async function autoplay() {
-  if (config.mode !== "demo" || process.env.DEMO_AUTOPLAY === "0" || running) return;
+  if (config.mode !== "demo" || process.env.DEMO_AUTOPLAY === "0" || running || isLocked()) return;
   const db = load();
   const since = (Date.now() - Date.parse(db.lastTickAt || "1970-01-01")) / 1000;
   const cur = db.items.find((i) => i.id === db.currentItemId)!;
   if (cur.estValueUsd >= db.goalUsd) {
     const doneAt = db.trades.at(-1)?.completedAt;
-    if (doneAt && (Date.now() - Date.parse(doneAt)) / 1000 > RESTART_S) resetDb(); // loop the showcase
+    if (doneAt && (Date.now() - Date.parse(doneAt)) / 1000 > RESTART_S) await submit({ type: "reset" }); // loop the showcase
     return;
   }
   if (since < TICK_S) return;

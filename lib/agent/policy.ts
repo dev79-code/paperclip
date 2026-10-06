@@ -25,16 +25,23 @@ export function screenOffer(offer: Pick<Offer, "rawText" | "itemName" | "itemDes
   return flags;
 }
 
-/** Apply hard rules on top of the model's opinion. Returns the final evaluation. */
+/** Apply hard rules on top of the model's opinion. Returns the final evaluation.
+ *  If the rules change the decision, the model's drafted reply is replaced too – otherwise someone
+ *  could be told "Deal!" while the agent actually rejects them. */
 export function enforce(ev: Evaluation, current: Item): Evaluation {
   const out = { ...ev, policyFlags: [...ev.policyFlags] };
   const mult = ev.estValueUsd / Math.max(current.estValueUsd, 0.0001);
+  let why: "banned" | "risk" | "downtrade" | null = null;
 
   if (out.policyFlags.some((f) => f.startsWith("banned") || f.startsWith("cash"))) {
     out.decision = "reject";
+    why = "banned";
   }
   if (out.policyFlags.includes("scam-pattern") || ev.risk > 0.6) {
-    if (out.decision === "accept") out.decision = "reject";
+    if (out.decision !== "reject") {
+      out.decision = "reject";
+      why = "risk";
+    }
     out.policyFlags.push("risk-too-high");
   }
   // Never trade down unless it's a great story and only a small step down.
@@ -42,13 +49,27 @@ export function enforce(ev: Evaluation, current: Item): Evaluation {
     if (!(ev.story >= 0.8 && mult >= 0.7)) {
       out.decision = "counter";
       out.policyFlags.push("downtrade-blocked");
+      why = "downtrade";
     }
   }
   // Sanity: absurd jumps are almost always fraud or mis-valuation.
   if (out.decision === "accept" && mult > 50 && current.estValueUsd > 5) {
     out.policyFlags.push("implausible-jump:needs-human");
   }
+
+  if (out.decision !== ev.decision) {
+    out.replyText = policyReply(out.decision, why, current);
+    out.reasoning = `${ev.reasoning} Overruled by the rules (${why}): ${ev.decision} → ${out.decision}.`;
+  }
   return out;
+}
+
+/** Fixed replies used whenever the rules overrule the model. */
+export function policyReply(decision: Evaluation["decision"], why: "banned" | "risk" | "downtrade" | null, current: Item) {
+  if (decision === "counter") return `Tempting, but that would be a step down from my ${current.name}. Could you add something to make it a step up?`;
+  if (decision === "reject" && why === "banned") return `Thanks for the offer, but I can't accept that one. I only do straight barters, with no cash, crypto or restricted items.`;
+  if (decision === "reject") return `Thanks for the offer! I can't go ahead with this one as it stands. I need clear, recent photos and normal shipping terms for every trade.`;
+  return `Thanks! Let me think about this one.`;
 }
 
 export function needsApproval(ev: Evaluation) {
