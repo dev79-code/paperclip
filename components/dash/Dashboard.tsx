@@ -60,6 +60,9 @@ const clock = (iso: string) => { const d = new Date(iso); return `${pad2(d.getHo
 export function Dashboard() {
   const { s, err } = useLive();
   const [offerOpen, setOfferOpen] = useState(false);
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get("offer")) setOfferOpen(true); // linked from /docs
+  }, []);
 
   if (!s) {
     return (
@@ -234,7 +237,8 @@ function Masthead({ s, err, onOffer }: { s: State; err: boolean; onOffer: () => 
         <span suppressHydrationWarning>{now}</span>
         {err && <span style={{ color: "var(--warn)" }}>reconnecting</span>}
         {s.xHandle && <a href={`https://x.com/${s.xHandle}`} target="_blank" rel="noreferrer">@{s.xHandle}</a>}
-        <a href="/admin">Custodian</a>
+        <a href="/docs">How it works</a>
+        <a href="/docs#wallet">Wallet</a>
         <button onClick={onOffer}>Make an offer</button>
       </div>
     </header>

@@ -20,7 +20,6 @@
     "@fontsource/ibm-plex-mono": "^5.3.0",
     "@fontsource/ibm-plex-sans": "^5.3.0",
     "@fontsource/instrument-serif": "^5.3.0",
-    "@solana/spl-token": "^0.4.15",
     "@solana/web3.js": "^1.99.0",
     "bs58": "^6.0.0",
     "next": "15.5.27",
@@ -38,5 +37,11 @@
   "engines": {
     "node": ">=20"
   },
-  "description": "An AI agent that starts with one red paperclip and trades its way up to $100,000, live, with a public dashboard."
+  "description": "An AI agent that starts with one red paperclip and trades its way up to $100,000, live, with a public dashboard.",
+  "overrides": {
+    "postcss": "^8.5.29",
+    "jayson": {
+      "uuid": "^11.1.1"
+    }
+  }
 }

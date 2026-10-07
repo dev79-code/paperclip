@@ -21,7 +21,10 @@ export async function tick(): Promise<DB | null> {
   const r = await withDb(async (db) => {
     db.tickCount++;
     if (config.mode === "demo") simulateCounterparties(db);
-    if (currentItem(db).estValueUsd >= db.goalUsd) return db; // goal reached – resting
+    if (currentItem(db).estValueUsd >= db.goalUsd) {
+      await processPayouts(db); // goal reached – resting, but still settle the last trade's payments
+      return db;
+    }
 
     const item = currentItem(db);
     // AI key dead (out of credit / over limit)? Don't hammer it – say so once, keep the site alive, retry later.
@@ -119,12 +122,18 @@ async function listen(db: DB, item: Item) {
         // A Solana address in someone's message → remember it for their most recent deal (payouts go there).
         const addr = findAddress(msg.text);
         if (addr) {
-          const theirs = [...db.offers].reverse().find((o) => o.from === msg.from && o.channel === msg.channel && !["rejected", "expired"].includes(o.status));
-          if (theirs && theirs.payoutAddress !== addr) {
-            theirs.payoutAddress = addr;
-            log(db, "system", `${msg.from} sent a Solana address for “${theirs.itemName}”.`, theirs.id);
+          // Only the SAME account on the SAME platform (and same forum) can set the address for a deal –
+          // "@bob" on a forum is not "@bob" on X.
+          const theirs = [...db.offers].reverse().find((o) => sameSender(o, msg) && !["rejected", "expired"].includes(o.status));
+          if (theirs) {
+            if (theirs.payoutAddress && theirs.payoutAddress !== addr && theirs.status === "completed") {
+              log(db, "policy", `${msg.from} sent a different Solana address after the deal closed – ignored; change it by hand in /admin if it's genuine.`, theirs.id);
+            } else {
+              if (theirs.payoutAddress !== addr) log(db, "system", `${msg.from} sent a Solana address for “${theirs.itemName}”.`, theirs.id);
+              theirs.payoutAddress = addr;
+              attachAddress(db, theirs.id, addr);
+            }
           }
-          attachAddress(db, msg, addr);
         }
         const existing = db.offers.find((o) => o.threadRef === msg.threadRef && o.from === msg.from && OPEN.includes(o.status));
         if (existing) {
@@ -307,6 +316,14 @@ function offline(db: DB, reason: string) {
   const text = `My AI brain is offline (${reason}). Offers are safe and will be answered as soon as it's back.`;
   const last = [...db.log].reverse().find((l) => l.kind === "error" || l.kind === "think");
   if (last?.text !== text) log(db, "error", text);
+}
+
+/** Is this message from the account that made this offer? Usernames are only unique per platform (and per forum). */
+function sameSender(o: Offer, msg: { channel: Offer["channel"]; from: string; venueId?: string }) {
+  if (o.channel !== msg.channel) return false;
+  if (o.from.toLowerCase() !== msg.from.toLowerCase()) return false;
+  if (o.channel === "discourse" && o.venueId !== msg.venueId) return false; // each forum has its own users
+  return true;
 }
 
 async function safe<T>(fn: () => Promise<T>, fallback: T): Promise<T> {

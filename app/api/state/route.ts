@@ -74,6 +74,7 @@ export async function GET() {
     postsCount: db.posts.length,
     xHandle: config.xHandle,
     treasury: publicTreasury(db),
+    rules: { approvalThresholdUsd: config.approvalThresholdUsd, roundMin: config.tickMinMinutes, roundMax: config.tickMaxMinutes },
     // Real posts & public replies on X (embedded on the site). Demo posts have no real id → shown as previews.
     xFeed: [
       ...db.posts.filter((p) => p.channel === "x" && /^\d{6,}$/.test(p.externalId || "")).map((p) => ({ kind: "post", id: p.externalId!, at: p.createdAt, url: p.url, text: p.title })),

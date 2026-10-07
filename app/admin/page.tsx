@@ -183,7 +183,7 @@ function WalletAdmin({ db, busy, act }: { db: any; busy: boolean; act: (b: Recor
   if (!t) return null;
   const L = db.walletLimits || {};
   const payees: Record<string, string> = db.payees || {};
-  const pending = (db.payouts || []).filter((p: any) => ["awaiting_approval", "failed", "needs_address"].includes(p.status)).reverse();
+  const pending = (db.payouts || []).filter((p: any) => ["awaiting_approval", "failed", "needs_address", "sending"].includes(p.status)).reverse();
   return (
     <section style={{ marginTop: 24 }}>
       <h2>Wallet</h2>
@@ -214,8 +214,16 @@ function WalletAdmin({ db, busy, act }: { db: any; busy: boolean; act: (b: Recor
                 <b>${p.usd} {p.token}</b> · {p.purpose} → {p.toLabel || "?"} <span className="mono small muted">{p.to || "(no address yet)"}</span>
                 <div className="small muted">{p.reason}{p.why ? ` · ${p.why}` : ""}</div>
               </div>
-              {p.status !== "needs_address" && <button disabled={busy} onClick={() => confirm(`Send $${p.usd} ${p.token} to ${p.to}?`) && act({ action: "wallet_approve", payoutId: p.id })}>Approve & send</button>}
-              <button className="ghost" disabled={busy} onClick={() => act({ action: "wallet_reject", payoutId: p.id })}>Veto</button>
+              {!["needs_address", "sending"].includes(p.status) && (
+                <button
+                  disabled={busy}
+                  title={p.status === "failed" ? "Checks the blockchain for the earlier attempt first – it is never paid twice" : undefined}
+                  onClick={() => confirm(`${p.status === "failed" ? "Retry" : "Send"} $${p.usd} ${p.token} to ${p.to}?`) && act({ action: "wallet_approve", payoutId: p.id })}
+                >
+                  {p.status === "failed" ? "Check & retry" : "Approve & send"}
+                </button>
+              )}
+              {p.status === "sending" ? <span className="small muted">in flight – checked every round</span> : <button className="ghost" disabled={busy} onClick={() => act({ action: "wallet_reject", payoutId: p.id })}>Veto</button>}
             </div>
           ))}
         </div>

@@ -171,7 +171,7 @@ WALLET_ENABLED=1
 WALLET_NETWORK=devnet
 ```
 
-Run `pm2 restart all --update-env`. In live mode Clippy asks people for their Solana address after a deal and pays once the item arrives. To switch to real money, set `WALLET_NETWORK=mainnet`, run `create` again with the devnet `data/wallet.json` moved aside first, and fund it with only a small float (for example $50 USDC + 0.1 SOL). Use "Pause all payments" in `/admin` at any time.
+Run `pm2 restart all --update-env`. In live mode Clippy asks people for their Solana address after a deal and pays once the item arrives. To switch to real money, set `WALLET_NETWORK=mainnet`, run `create` again with the devnet `data/wallet.json` and `data/wallet-journal.jsonl` moved aside first, and fund it with only a small float (for example $50 USDC + 0.1 SOL). Use "Pause all payments" in `/admin` at any time.
 
 ## Everyday commands
 ```bash

@@ -5,10 +5,12 @@
 //         within limits  → sent automatically (or "simulated" in demo mode)
 //         over a limit   → awaiting_approval (a human clicks Approve in /admin)
 //         invalid        → rejected
+import fs from "node:fs";
+import path from "node:path";
 import { config } from "../config";
-import { log, save, uid } from "../db";
+import { log, uid } from "../db";
 import type { DB, Offer, Payout, PayoutPurpose } from "../types";
-import { attemptStatus, balances, broadcast, hasWallet, isValidRecipient, NETWORK, prepare, solUsd, walletAddress } from "./solana";
+import { balances, broadcast, hasWallet, isValidRecipient, NETWORK, prepare, solUsd, txStatus, walletAddress } from "./solana";
 
 const num = (k: string, d: number) => (process.env[k] !== undefined && process.env[k] !== "" ? Number(process.env[k]) : d);
 export const limits = () => ({
@@ -51,6 +53,64 @@ export function spentToday(db: DB) {
   return within24h(db).reduce((s, p) => s + p.usd, 0);
 }
 
+// ---------------------------------------------------------------- journal
+// Every signed transaction is written here (synced to disk) BEFORE it is broadcast. db.json is only
+// saved at the end of a round, so after a crash or timeout this file is the source of truth: before
+// paying anything we ask the chain about every earlier attempt for the same payment.
+const JOURNAL = path.join(path.dirname(process.env.DB_FILE || path.join(process.cwd(), "data", "db.json")), "wallet-journal.jsonl");
+interface JEntry { key: string; payoutId: string; to: string; token: "SOL" | "USDC"; amount: number; usd: number; purpose: PayoutPurpose; signature: string; lastValidBlockHeight: number; at: string }
+
+/** Same key = same real-world payment, even if the payout record was re-created after a crash. */
+const keyOf = (p: Payout) => (p.offerId ? `offer:${p.offerId}:${p.purpose}` : `id:${p.id}`);
+
+function journal(): JEntry[] {
+  try {
+    return fs.readFileSync(JOURNAL, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
+}
+function journalAppend(e: JEntry) {
+  fs.mkdirSync(path.dirname(JOURNAL), { recursive: true });
+  const fd = fs.openSync(JOURNAL, "a", 0o600);
+  try {
+    fs.writeSync(fd, JSON.stringify(e) + "\n");
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Look up every earlier signed attempt for this payment on-chain.
+ *  "paid"    – one of them landed: mark it sent, never pay again
+ *  "pending" – one could still land: wait
+ *  "unknown" – couldn't reach Solana: do nothing this time
+ *  "clear"   – none landed and none can: safe to send
+ */
+async function reconcile(db: DB, p: Payout): Promise<"paid" | "pending" | "unknown" | "clear"> {
+  const tries = journal().filter((j) => j.key === keyOf(p)).reverse();
+  for (const j of tries) {
+    let st: Awaited<ReturnType<typeof txStatus>>;
+    try {
+      st = await txStatus(j.signature, j.lastValidBlockHeight);
+    } catch {
+      p.why = "couldn't reach Solana to check an earlier attempt – will retry";
+      return "unknown";
+    }
+    if (st === "landed") {
+      Object.assign(p, { status: "sent", signature: j.signature, amount: j.amount, sentAt: p.sentAt || j.at, why: undefined });
+      log(db, "system", `Payment to ${p.toLabel || p.to} confirmed on-chain ($${p.usd} ${p.token}).`, p.id);
+      return "paid";
+    }
+    if (st === "pending") {
+      Object.assign(p, { status: "sending", signature: j.signature, why: "sent – waiting for the network to confirm" });
+      return "pending";
+    }
+  }
+  return "clear";
+}
+
 // ---------------------------------------------------------------- proposing
 /** Create a payout request. Amount is in USD; it is converted to the token when sent. */
 export function propose(db: DB, p: { purpose: PayoutPurpose; usd: number; to?: string; toLabel?: string; offerId?: string; reason: string }): Payout | null {
@@ -77,12 +137,11 @@ export function onTradeCompleted(db: DB, o: Offer, itemValueUsd: number) {
   if (L.tip > 0) propose(db, { purpose: "tip", usd: L.tip, to: o.payoutAddress, toLabel: label, offerId: o.id, reason: `Thanks for trading “${o.itemName}”` });
 }
 
-/** An address arrived from this person – fill in any of their payouts that were waiting for it.
- *  Matched through the payout's offer on handle AND channel: "@bob" on a forum is not "@bob" on X. */
-export function attachAddress(db: DB, sender: { from: string; channel: string }, addr: string) {
+/** The counterparty of THIS offer sent an address – fill in that offer's payouts that were waiting for it. */
+export function attachAddress(db: DB, offerId: string, addr: string) {
+  if (!isValidRecipient(addr)) return;
   for (const p of db.payouts) {
-    const o = p.offerId ? db.offers.find((x) => x.id === p.offerId) : undefined;
-    if (p.status === "needs_address" && o && o.from === sender.from && o.channel === sender.channel) {
+    if (p.status === "needs_address" && p.offerId === offerId) {
       p.to = addr;
       p.status = "queued";
     }
@@ -116,6 +175,11 @@ async function execute(db: DB, p: Payout): Promise<void> {
     log(db, "system", `(demo) Would pay $${p.usd} ${p.token} to ${p.toLabel || p.to} – ${p.reason}.`, p.id);
     return;
   }
+  // 1. Never pay twice: check every earlier attempt for this payment first.
+  const prior = await reconcile(db, p);
+  if (prior !== "clear") return;
+
+  // 2. Price + balance.
   if (p.token === "SOL") {
     const px = await solUsd();
     if (!px) {
@@ -125,8 +189,13 @@ async function execute(db: DB, p: Payout): Promise<void> {
     }
     p.amount = +(p.usd / px).toFixed(6);
   } else p.amount = p.usd;
-
-  const bal = await balances();
+  let bal: { sol: number; usdc: number };
+  try {
+    bal = await balances();
+  } catch {
+    p.why = "couldn't reach Solana – will retry";
+    return;
+  }
   const needSol = (p.token === "SOL" ? p.amount : 0) + limits().solReserve;
   if (bal.sol < needSol || (p.token === "USDC" && bal.usdc < p.amount)) {
     p.status = "awaiting_approval";
@@ -134,60 +203,40 @@ async function execute(db: DB, p: Payout): Promise<void> {
     log(db, "error", `Wallet too low to pay $${p.usd} ${p.token} to ${p.toLabel || p.to}. Top it up.`, p.id);
     return;
   }
+
+  // 3. Sign, write the signature to disk, THEN broadcast.
   let tx: Awaited<ReturnType<typeof prepare>>;
   try {
     tx = await prepare(p.to, p.token, p.amount);
   } catch (e: any) {
-    p.status = "failed";
-    p.why = String(e.message || e).slice(0, 200);
-    p.signature = undefined; // nothing was signed, so nothing can land
-    log(db, "error", `Payment to ${p.toLabel || p.to} failed: ${p.why}`, p.id);
+    p.why = `couldn't build the transaction: ${String(e.message || e).slice(0, 120)} – will retry`;
     return;
   }
-  // Write-ahead: save the transaction id BEFORE broadcasting, so neither a timeout nor a crash can
-  // make us send the same payment twice – the next attempt checks this id on-chain first.
+  journalAppend({ key: keyOf(p), payoutId: p.id, to: p.to, token: p.token, amount: p.amount, usd: p.usd, purpose: p.purpose, signature: tx.signature, lastValidBlockHeight: tx.lastValidBlockHeight, at: new Date().toISOString() });
   p.signature = tx.signature;
-  p.lastValidBlockHeight = tx.lastValidBlockHeight;
   p.status = "sending";
-  save(db);
   try {
     await broadcast(tx);
     p.status = "sent";
+    p.why = undefined;
     p.sentAt = new Date().toISOString();
     log(db, "system", `Paid ${p.amount} ${p.token} ($${p.usd}) to ${p.toLabel || p.to} – ${p.reason}.`, p.id);
   } catch (e: any) {
-    // A timeout doesn't mean it didn't land. Leave it "sending"; reconcile() decides from the chain.
-    p.why = String(e.message || e).slice(0, 200);
-    log(db, "error", `Payment to ${p.toLabel || p.to} not confirmed yet (${p.why}) – checking again next round.`, p.id);
-    await reconcile(db, p);
-  }
-}
-
-/** Settle a payment whose earlier attempt has an unknown outcome, using the chain as the source of truth. */
-async function reconcile(db: DB, p: Payout): Promise<void> {
-  if (!p.signature) {
-    p.status = "failed";
-    return;
-  }
-  let s: Awaited<ReturnType<typeof attemptStatus>>;
-  try {
-    s = await attemptStatus(p.signature, p.lastValidBlockHeight);
-  } catch {
-    return; // RPC hiccup – stay as we are, try again later
-  }
-  if (s === "landed") {
-    p.status = "sent";
-    p.sentAt ??= new Date().toISOString();
-    p.why = undefined;
-    log(db, "system", `Confirmed: ${p.amount} ${p.token} ($${p.usd}) reached ${p.toLabel || p.to} – ${p.reason}.`, p.id);
-  } else if (s === "failed" || s === "expired") {
-    p.status = "failed";
-    p.why = s === "failed" ? "the transaction failed on-chain (no money moved)" : "the transaction never landed (no money moved)";
-    p.signature = undefined; // proven not to have moved money – a fresh attempt is safe
-    p.lastValidBlockHeight = undefined;
-    log(db, "error", `Payment to ${p.toLabel || p.to} did not go through: ${p.why}.`, p.id);
-  } else {
-    p.status = "sending"; // might still land – never resend while in this state
+    // Timeouts don't mean it failed. Ask the chain.
+    let st: Awaited<ReturnType<typeof txStatus>> | "unknown" = "unknown";
+    try {
+      st = await txStatus(tx.signature, tx.lastValidBlockHeight);
+    } catch {}
+    if (st === "landed") {
+      Object.assign(p, { status: "sent", sentAt: new Date().toISOString(), why: undefined });
+      log(db, "system", `Paid ${p.amount} ${p.token} ($${p.usd}) to ${p.toLabel || p.to} – ${p.reason}.`, p.id);
+    } else if (st === "pending" || st === "unknown") {
+      p.why = "sent – waiting for the network to confirm (checked again every round)";
+    } else {
+      p.status = "failed";
+      p.why = st === "expired" ? "didn't go through – no money moved, safe to approve again" : `failed on-chain – no money moved (${String(e.message || e).slice(0, 100)})`;
+      log(db, "error", `Payment to ${p.toLabel || p.to} didn't go through: ${p.why}.`, p.id);
+    }
   }
 }
 
@@ -199,11 +248,20 @@ export async function processPayouts(db: DB) {
   for (const b of bills()) {
     const addr = P[b.name];
     if (!addr) continue;
-    const last = db.payouts.filter((p) => p.purpose === "cost" && p.to === addr && p.status !== "rejected").at(-1);
-    if (!last || Date.now() - Date.parse(last.createdAt) > b.days * DAY) propose(db, { purpose: "cost", usd: b.usd, to: addr, toLabel: b.name, reason: `Running cost: ${b.name}` });
+    const lastDb = db.payouts.filter((p) => p.purpose === "cost" && p.to === addr && p.status !== "rejected").at(-1)?.createdAt;
+    const lastJ = journal().filter((j) => j.purpose === "cost" && j.to === addr).at(-1)?.at; // survives a crash
+    const last = Math.max(Date.parse(lastDb || "") || 0, Date.parse(lastJ || "") || 0);
+    if (Date.now() - last > b.days * DAY) propose(db, { purpose: "cost", usd: b.usd, to: addr, toLabel: b.name, reason: `Running cost: ${b.name}` });
   }
-  // payments whose outcome wasn't known last time (timeout or crash mid-send): settle them from the chain
-  if (config.mode !== "demo" && hasWallet()) for (const p of db.payouts.filter((x) => x.status === "sending")) await reconcile(db, p);
+  // Anything sent but not yet confirmed: ask the chain. If it can no longer land, re-queue it (limits re-checked).
+  for (const p of db.payouts.filter((x) => x.status === "sending")) {
+    if (config.mode === "demo" || !hasWallet()) continue;
+    const r = await reconcile(db, p);
+    if (r === "clear") {
+      p.status = "queued";
+      p.why = "previous attempt didn't land – retrying";
+    }
+  }
   for (const p of db.payouts.filter((x) => x.status === "queued")) {
     const v = check(db, p);
     if (v.ok) await execute(db, p);
@@ -233,14 +291,8 @@ export async function approve(db: DB, id: string): Promise<string> {
   if (!["awaiting_approval", "failed"].includes(p.status)) return `payment is ${p.status}`;
   if (!limits().enabled) return "wallet is switched off";
   if (!isValidRecipient(p.to)) return "not a valid Solana address";
-  // Never resend while an earlier attempt could still have gone through.
-  if (p.signature && config.mode !== "demo" && hasWallet()) {
-    await reconcile(db, p);
-    if (p.status === "sent") return "ok"; // the earlier attempt had actually landed – nothing more to pay
-    if (p.status === "sending") return "the earlier attempt may still go through – try again in a couple of minutes";
-  }
   log(db, "system", `Human approved payment of $${p.usd} to ${p.toLabel || p.to}.`, p.id);
-  await execute(db, p);
+  await execute(db, p); // checks the chain for earlier attempts first – a "failed" payment that actually landed is never paid twice
   return p.status === "sent" || p.status === "simulated" ? "ok" : p.why || p.status;
 }
 
@@ -256,6 +308,13 @@ export function publicTreasury(db: DB) {
     paused: !!db.walletPaused,
     spentToday: +spentToday(db).toFixed(2),
     dailyLimit: L.perDay,
+    // the rules are public on purpose: anyone can check Clippy keeps to them
+    limits: { perPayment: L.perPayment, perDay: L.perDay, perRecipientDay: L.perRecipientDay, shipping: L.shipping, sweetenerMax: L.sweetenerMax, sweetenerPct: L.sweetenerPctOfItem, tip: L.tip, tipsPerDay: L.tipsPerDay },
+    totals: (() => {
+      const done = db.payouts.filter((p) => p.status === "sent" || p.status === "simulated");
+      const by = (k: PayoutPurpose) => +done.filter((p) => p.purpose === k).reduce((s, p) => s + p.usd, 0).toFixed(2);
+      return { count: done.length, usd: +done.reduce((s, p) => s + p.usd, 0).toFixed(2), shipping: by("shipping"), sweetener: by("sweetener"), tip: by("tip"), cost: by("cost"), waiting: db.payouts.filter((p) => ["awaiting_approval", "needs_address", "queued", "sending"].includes(p.status)).length };
+    })(),
     payouts: db.payouts.slice(-12).reverse().map((p) => ({
       id: p.id, purpose: p.purpose, token: p.token, usd: p.usd, amount: p.amount, status: p.status,
       to: short(p.to), toLabel: label(p.toLabel), reason: p.reason, signature: p.signature, at: p.sentAt || p.createdAt,

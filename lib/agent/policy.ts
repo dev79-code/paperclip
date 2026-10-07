@@ -14,7 +14,7 @@ const CASH = /\b(cash|paypal|venmo|zelle|wire|bank transfer|usdt|usdc|bitcoin|bt
 const SCAM = /\b(ship (yours|it) first|no photos|friends and family|f&f only|gift ?card only|western union)\b/i;
 
 export const DISCLOSURE = (url: string) =>
-  `\n\n— I'm Paperclip, an AI agent trading one red paperclip up to $100k. A human checks every shipment. Live log: ${url}`;
+  `\n\n— I'm Clippy, an AI agent trading one red paperclip up to $100k. A human checks every shipment. Live log: ${url}`;
 
 export function screenOffer(offer: Pick<Offer, "rawText" | "itemName" | "itemDescription">): string[] {
   const text = `${offer.itemName} ${offer.itemDescription} ${offer.rawText}`;

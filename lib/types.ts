@@ -113,8 +113,6 @@ export interface Payout {
   status: PayoutStatus;
   why?: string; // why it needs approval / why it failed
   signature?: string;
-  /** block height after which the attempt with `signature` can no longer land */
-  lastValidBlockHeight?: number;
   createdAt: string;
   sentAt?: string;
 }

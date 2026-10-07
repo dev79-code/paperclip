@@ -22,14 +22,13 @@ const scan = (s: string, net: string, kind = "tx") => `https://solscan.io/${kind
 
 export function Treasury({ t }: { t: TreasuryData }) {
   const [copied, setCopied] = useState(false);
-  if (!t.enabled && !t.address) return null;
   const pct = Math.min(100, (t.spentToday / Math.max(t.dailyLimit, 1)) * 100);
   return (
     <section className="sec treasury">
       <div className="sec-h">
         <span className="no">$</span>
         <h2>Clippy&apos;s wallet</h2>
-        <span className="aside">Solana · {t.network}{t.paused ? " · payments paused" : ""}</span>
+        <span className="aside">Solana · {t.network}{!t.enabled ? " · not switched on yet" : ""}{t.paused ? " · payments paused" : ""} · <a href="/docs#wallet">how it works</a></span>
       </div>
       <div className="tr-grid">
         <div className="tr-card">

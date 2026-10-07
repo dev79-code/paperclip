@@ -3,9 +3,43 @@
 // It is never logged, never sent to the AI, never returned by any API.
 import fs from "node:fs";
 import path from "node:path";
-import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
 import bs58 from "bs58";
-import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+
+// The two SPL instructions we need, built by hand (avoids @solana/spl-token and its vulnerable bigint-buffer dependency).
+const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+const ATA_PROGRAM = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
+export const ataOf = (mint: PublicKey, owner: PublicKey) =>
+  PublicKey.findProgramAddressSync([owner.toBuffer(), TOKEN_PROGRAM.toBuffer(), mint.toBuffer()], ATA_PROGRAM)[0];
+const createAtaIdempotent = (payer: PublicKey, ata: PublicKey, owner: PublicKey, mint: PublicKey) =>
+  new TransactionInstruction({
+    programId: ATA_PROGRAM,
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: ata, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: false, isWritable: false },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: TOKEN_PROGRAM, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from([1]), // CreateIdempotent
+  });
+function transferChecked(src: PublicKey, mint: PublicKey, dst: PublicKey, owner: PublicKey, amount: bigint, decimals: number) {
+  const data = Buffer.alloc(10);
+  data.writeUInt8(12, 0); // TransferChecked
+  data.writeBigUInt64LE(amount, 1);
+  data.writeUInt8(decimals, 9);
+  return new TransactionInstruction({
+    programId: TOKEN_PROGRAM,
+    keys: [
+      { pubkey: src, isSigner: false, isWritable: true },
+      { pubkey: mint, isSigner: false, isWritable: false },
+      { pubkey: dst, isSigner: false, isWritable: true },
+      { pubkey: owner, isSigner: true, isWritable: false },
+    ],
+    data,
+  });
+}
 
 export const NETWORK = (process.env.WALLET_NETWORK === "mainnet" ? "mainnet" : "devnet") as "mainnet" | "devnet";
 export const RPC_URL = process.env.SOLANA_RPC_URL || (NETWORK === "mainnet" ? "https://api.mainnet-beta.solana.com" : "https://api.devnet.solana.com");
@@ -84,7 +118,7 @@ export async function balances(): Promise<{ sol: number; usdc: number }> {
   const lamports = await c.getBalance(owner);
   let usdc = 0;
   try {
-    const ata = getAssociatedTokenAddressSync(USDC_MINT, owner);
+    const ata = ataOf(USDC_MINT, owner);
     const b = await c.getTokenAccountBalance(ata);
     usdc = Number(b.value.uiAmount || 0);
   } catch {
@@ -100,49 +134,55 @@ export function buildTransfer(from: PublicKey, to: string, token: "SOL" | "USDC"
   if (token === "SOL") {
     tx.add(SystemProgram.transfer({ fromPubkey: from, toPubkey: dest, lamports: Math.round(amount * LAMPORTS_PER_SOL) }));
   } else {
-    const fromAta = getAssociatedTokenAddressSync(USDC_MINT, from);
-    const toAta = getAssociatedTokenAddressSync(USDC_MINT, dest);
-    tx.add(createAssociatedTokenAccountIdempotentInstruction(from, toAta, dest, USDC_MINT)); // creates their USDC account if missing
-    tx.add(createTransferCheckedInstruction(fromAta, USDC_MINT, toAta, from, BigInt(Math.round(amount * 10 ** USDC_DECIMALS)), USDC_DECIMALS));
+    const fromAta = ataOf(USDC_MINT, from);
+    const toAta = ataOf(USDC_MINT, dest);
+    tx.add(createAtaIdempotent(from, toAta, dest, USDC_MINT)); // creates their USDC account if missing
+    tx.add(transferChecked(fromAta, USDC_MINT, toAta, from, BigInt(Math.round(amount * 10 ** USDC_DECIMALS)), USDC_DECIMALS));
   }
   return tx;
 }
 
-/** Build and SIGN a transfer without sending it. The signature is the transaction's id, so it can be
- *  saved before broadcasting – that is what lets us check later whether a payment really went out. */
-export async function prepare(to: string, token: "SOL" | "USDC", amount: number) {
+// ---------------------------------------------------------------- safe sending
+// A Solana signature is known BEFORE the transaction is broadcast. We sign first, let the caller
+// write the signature to disk, then broadcast. If anything goes wrong afterwards (timeout, crash),
+// we can always ask the chain "did this exact transaction land?" instead of guessing and paying twice.
+export interface Prepared { signature: string; lastValidBlockHeight: number; blockhash: string; raw: Buffer }
+
+export async function prepare(to: string, token: "SOL" | "USDC", amount: number): Promise<Prepared> {
   const kp = loadKeypair();
   const tx = buildTransfer(kp.publicKey, to, token, amount);
   const { blockhash, lastValidBlockHeight } = await connection().getLatestBlockhash("confirmed");
   tx.recentBlockhash = blockhash;
   tx.feePayer = kp.publicKey;
   tx.sign(kp);
-  return { signature: bs58.encode(tx.signature!), blockhash, lastValidBlockHeight, raw: tx.serialize() };
+  return { signature: bs58.encode(tx.signature!), lastValidBlockHeight, blockhash, raw: tx.serialize() };
 }
 
-/** Broadcast a prepared transfer and wait for confirmation. Throws if it failed or expired. */
-export async function broadcast(p: Awaited<ReturnType<typeof prepare>>): Promise<void> {
+/** Broadcast and wait for confirmation. Throws on timeout – use txStatus() to find out what actually happened. */
+export async function broadcast(p: Prepared): Promise<void> {
   const c = connection();
-  await c.sendRawTransaction(p.raw, { maxRetries: 5 });
+  await c.sendRawTransaction(p.raw, { skipPreflight: false, maxRetries: 5 });
   const r = await c.confirmTransaction({ signature: p.signature, blockhash: p.blockhash, lastValidBlockHeight: p.lastValidBlockHeight }, "confirmed");
   if (r.value.err) throw new Error(`transaction failed on-chain: ${JSON.stringify(r.value.err)}`);
 }
 
-/** What happened to an earlier attempt:
- *  landed  – it went through (never send again)
- *  failed  – it was processed but errored (no money moved)
- *  expired – it never landed and now never can (safe to send a new one)
- *  pending – it might still land (don't send again yet) */
-export async function attemptStatus(signature: string, lastValidBlockHeight?: number): Promise<"landed" | "failed" | "expired" | "pending"> {
+/**
+ * What happened to a signed transaction?
+ *  landed  – it's on-chain and succeeded (money moved)
+ *  errored – it's on-chain but failed (no money moved, fee spent)
+ *  pending – not seen yet, but it could still land (its blockhash hasn't expired) → wait
+ *  expired – not on-chain and can never land now → safe to send a NEW transaction
+ */
+export async function txStatus(signature: string, lastValidBlockHeight: number): Promise<"landed" | "errored" | "pending" | "expired"> {
   const c = connection();
-  const s = (await c.getSignatureStatus(signature, { searchTransactionHistory: true })).value;
-  if (s) {
-    if (s.err) return "failed";
-    if (s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized") return "landed";
-    return "pending";
-  }
-  if (lastValidBlockHeight == null) return "pending"; // can't prove it expired
-  return (await c.getBlockHeight("confirmed")) > lastValidBlockHeight ? "expired" : "pending";
+  const st = (await c.getSignatureStatus(signature, { searchTransactionHistory: true })).value;
+  if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return st.err ? "errored" : "landed";
+  const height = await c.getBlockHeight("confirmed");
+  if (height <= lastValidBlockHeight) return "pending";
+  // expired – but re-check once, in case it landed in the last moment
+  const again = (await c.getSignatureStatus(signature, { searchTransactionHistory: true })).value;
+  if (again && again.confirmationStatus) return again.err ? "errored" : "landed";
+  return "expired";
 }
 
 /** SOL price in USD (CoinGecko), cached for 5 minutes. Falls back to SOL_USD_FALLBACK, else null. */
