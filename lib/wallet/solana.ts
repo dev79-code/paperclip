@@ -3,7 +3,8 @@
 // It is never logged, never sent to the AI, never returned by any API.
 import fs from "node:fs";
 import path from "node:path";
-import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
+import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
+import bs58 from "bs58";
 import { createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 
 export const NETWORK = (process.env.WALLET_NETWORK === "mainnet" ? "mainnet" : "devnet") as "mainnet" | "devnet";
@@ -107,10 +108,41 @@ export function buildTransfer(from: PublicKey, to: string, token: "SOL" | "USDC"
   return tx;
 }
 
-export async function send(to: string, token: "SOL" | "USDC", amount: number): Promise<string> {
+/** Build and SIGN a transfer without sending it. The signature is the transaction's id, so it can be
+ *  saved before broadcasting – that is what lets us check later whether a payment really went out. */
+export async function prepare(to: string, token: "SOL" | "USDC", amount: number) {
   const kp = loadKeypair();
   const tx = buildTransfer(kp.publicKey, to, token, amount);
-  return sendAndConfirmTransaction(connection(), tx, [kp], { commitment: "confirmed" });
+  const { blockhash, lastValidBlockHeight } = await connection().getLatestBlockhash("confirmed");
+  tx.recentBlockhash = blockhash;
+  tx.feePayer = kp.publicKey;
+  tx.sign(kp);
+  return { signature: bs58.encode(tx.signature!), blockhash, lastValidBlockHeight, raw: tx.serialize() };
+}
+
+/** Broadcast a prepared transfer and wait for confirmation. Throws if it failed or expired. */
+export async function broadcast(p: Awaited<ReturnType<typeof prepare>>): Promise<void> {
+  const c = connection();
+  await c.sendRawTransaction(p.raw, { maxRetries: 5 });
+  const r = await c.confirmTransaction({ signature: p.signature, blockhash: p.blockhash, lastValidBlockHeight: p.lastValidBlockHeight }, "confirmed");
+  if (r.value.err) throw new Error(`transaction failed on-chain: ${JSON.stringify(r.value.err)}`);
+}
+
+/** What happened to an earlier attempt:
+ *  landed  – it went through (never send again)
+ *  failed  – it was processed but errored (no money moved)
+ *  expired – it never landed and now never can (safe to send a new one)
+ *  pending – it might still land (don't send again yet) */
+export async function attemptStatus(signature: string, lastValidBlockHeight?: number): Promise<"landed" | "failed" | "expired" | "pending"> {
+  const c = connection();
+  const s = (await c.getSignatureStatus(signature, { searchTransactionHistory: true })).value;
+  if (s) {
+    if (s.err) return "failed";
+    if (s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized") return "landed";
+    return "pending";
+  }
+  if (lastValidBlockHeight == null) return "pending"; // can't prove it expired
+  return (await c.getBlockHeight("confirmed")) > lastValidBlockHeight ? "expired" : "pending";
 }
 
 /** SOL price in USD (CoinGecko), cached for 5 minutes. Falls back to SOL_USD_FALLBACK, else null. */

@@ -124,7 +124,7 @@ async function listen(db: DB, item: Item) {
             theirs.payoutAddress = addr;
             log(db, "system", `${msg.from} sent a Solana address for “${theirs.itemName}”.`, theirs.id);
           }
-          attachAddress(db, msg.from, addr);
+          attachAddress(db, msg, addr);
         }
         const existing = db.offers.find((o) => o.threadRef === msg.threadRef && o.from === msg.from && OPEN.includes(o.status));
         if (existing) {

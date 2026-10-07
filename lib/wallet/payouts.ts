@@ -6,9 +6,9 @@
 //         over a limit   → awaiting_approval (a human clicks Approve in /admin)
 //         invalid        → rejected
 import { config } from "../config";
-import { log, uid } from "../db";
+import { log, save, uid } from "../db";
 import type { DB, Offer, Payout, PayoutPurpose } from "../types";
-import { balances, hasWallet, isValidRecipient, NETWORK, send, solUsd, walletAddress } from "./solana";
+import { attemptStatus, balances, broadcast, hasWallet, isValidRecipient, NETWORK, prepare, solUsd, walletAddress } from "./solana";
 
 const num = (k: string, d: number) => (process.env[k] !== undefined && process.env[k] !== "" ? Number(process.env[k]) : d);
 export const limits = () => ({
@@ -77,10 +77,12 @@ export function onTradeCompleted(db: DB, o: Offer, itemValueUsd: number) {
   if (L.tip > 0) propose(db, { purpose: "tip", usd: L.tip, to: o.payoutAddress, toLabel: label, offerId: o.id, reason: `Thanks for trading “${o.itemName}”` });
 }
 
-/** An address arrived from this person – fill in any of their payouts that were waiting for it. */
-export function attachAddress(db: DB, from: string, addr: string) {
+/** An address arrived from this person – fill in any of their payouts that were waiting for it.
+ *  Matched through the payout's offer on handle AND channel: "@bob" on a forum is not "@bob" on X. */
+export function attachAddress(db: DB, sender: { from: string; channel: string }, addr: string) {
   for (const p of db.payouts) {
-    if (p.status === "needs_address" && p.toLabel === from) {
+    const o = p.offerId ? db.offers.find((x) => x.id === p.offerId) : undefined;
+    if (p.status === "needs_address" && o && o.from === sender.from && o.channel === sender.channel) {
       p.to = addr;
       p.status = "queued";
     }
@@ -132,16 +134,60 @@ async function execute(db: DB, p: Payout): Promise<void> {
     log(db, "error", `Wallet too low to pay $${p.usd} ${p.token} to ${p.toLabel || p.to}. Top it up.`, p.id);
     return;
   }
-  p.status = "sending";
+  let tx: Awaited<ReturnType<typeof prepare>>;
   try {
-    p.signature = await send(p.to, p.token, p.amount);
+    tx = await prepare(p.to, p.token, p.amount);
+  } catch (e: any) {
+    p.status = "failed";
+    p.why = String(e.message || e).slice(0, 200);
+    p.signature = undefined; // nothing was signed, so nothing can land
+    log(db, "error", `Payment to ${p.toLabel || p.to} failed: ${p.why}`, p.id);
+    return;
+  }
+  // Write-ahead: save the transaction id BEFORE broadcasting, so neither a timeout nor a crash can
+  // make us send the same payment twice – the next attempt checks this id on-chain first.
+  p.signature = tx.signature;
+  p.lastValidBlockHeight = tx.lastValidBlockHeight;
+  p.status = "sending";
+  save(db);
+  try {
+    await broadcast(tx);
     p.status = "sent";
     p.sentAt = new Date().toISOString();
     log(db, "system", `Paid ${p.amount} ${p.token} ($${p.usd}) to ${p.toLabel || p.to} – ${p.reason}.`, p.id);
   } catch (e: any) {
-    p.status = "failed";
+    // A timeout doesn't mean it didn't land. Leave it "sending"; reconcile() decides from the chain.
     p.why = String(e.message || e).slice(0, 200);
-    log(db, "error", `Payment to ${p.toLabel || p.to} failed: ${p.why}`, p.id);
+    log(db, "error", `Payment to ${p.toLabel || p.to} not confirmed yet (${p.why}) – checking again next round.`, p.id);
+    await reconcile(db, p);
+  }
+}
+
+/** Settle a payment whose earlier attempt has an unknown outcome, using the chain as the source of truth. */
+async function reconcile(db: DB, p: Payout): Promise<void> {
+  if (!p.signature) {
+    p.status = "failed";
+    return;
+  }
+  let s: Awaited<ReturnType<typeof attemptStatus>>;
+  try {
+    s = await attemptStatus(p.signature, p.lastValidBlockHeight);
+  } catch {
+    return; // RPC hiccup – stay as we are, try again later
+  }
+  if (s === "landed") {
+    p.status = "sent";
+    p.sentAt ??= new Date().toISOString();
+    p.why = undefined;
+    log(db, "system", `Confirmed: ${p.amount} ${p.token} ($${p.usd}) reached ${p.toLabel || p.to} – ${p.reason}.`, p.id);
+  } else if (s === "failed" || s === "expired") {
+    p.status = "failed";
+    p.why = s === "failed" ? "the transaction failed on-chain (no money moved)" : "the transaction never landed (no money moved)";
+    p.signature = undefined; // proven not to have moved money – a fresh attempt is safe
+    p.lastValidBlockHeight = undefined;
+    log(db, "error", `Payment to ${p.toLabel || p.to} did not go through: ${p.why}.`, p.id);
+  } else {
+    p.status = "sending"; // might still land – never resend while in this state
   }
 }
 
@@ -156,6 +202,8 @@ export async function processPayouts(db: DB) {
     const last = db.payouts.filter((p) => p.purpose === "cost" && p.to === addr && p.status !== "rejected").at(-1);
     if (!last || Date.now() - Date.parse(last.createdAt) > b.days * DAY) propose(db, { purpose: "cost", usd: b.usd, to: addr, toLabel: b.name, reason: `Running cost: ${b.name}` });
   }
+  // payments whose outcome wasn't known last time (timeout or crash mid-send): settle them from the chain
+  if (config.mode !== "demo" && hasWallet()) for (const p of db.payouts.filter((x) => x.status === "sending")) await reconcile(db, p);
   for (const p of db.payouts.filter((x) => x.status === "queued")) {
     const v = check(db, p);
     if (v.ok) await execute(db, p);
@@ -185,6 +233,12 @@ export async function approve(db: DB, id: string): Promise<string> {
   if (!["awaiting_approval", "failed"].includes(p.status)) return `payment is ${p.status}`;
   if (!limits().enabled) return "wallet is switched off";
   if (!isValidRecipient(p.to)) return "not a valid Solana address";
+  // Never resend while an earlier attempt could still have gone through.
+  if (p.signature && config.mode !== "demo" && hasWallet()) {
+    await reconcile(db, p);
+    if (p.status === "sent") return "ok"; // the earlier attempt had actually landed – nothing more to pay
+    if (p.status === "sending") return "the earlier attempt may still go through – try again in a couple of minutes";
+  }
   log(db, "system", `Human approved payment of $${p.usd} to ${p.toLabel || p.to}.`, p.id);
   await execute(db, p);
   return p.status === "sent" || p.status === "simulated" ? "ok" : p.why || p.status;
